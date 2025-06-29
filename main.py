@@ -257,15 +257,20 @@ async def can_create_tasks(interaction: discord.Interaction) -> bool:
         return True
         
     # Check whitelist
-    session = get_session()
+    session = None
     try:
+        session = get_session()
         creator = session.query(TaskCreator).filter_by(
             user_id=str(interaction.user.id),
             server_id=str(interaction.guild_id)
         ).first()
         return creator is not None
+    except Exception as e:
+        print(f"Error checking task creation permissions: {e}")
+        return False
     finally:
-        session.close()
+        if session:
+            session.close()
 
 @client.tree.command(
     name="tcw",
@@ -336,48 +341,56 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
         )
         return
 
+    session = None
     try:
         due_date_dt = parser.parse(due_date)
         
         session = get_session()
+        new_task = Task(
+            name=name,
+            assigned_to=str(assigned_to.id),
+            due_date=due_date_dt,
+            description=description,
+            server_id=str(interaction.guild_id),
+            created_by=str(interaction.user.id)
+        )
+        session.add(new_task)
+        session.commit()
+        
+        embed = discord.Embed(
+            title="✅ Task Created",
+            description=f"Task '{name}' has been assigned to {assigned_to.display_name}",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Due Date", value=due_date_dt.strftime('%Y-%m-%d %H:%M UTC'))
+        await interaction.response.send_message(embed=embed)
+        
         try:
-            new_task = Task(
-                name=name,
-                assigned_to=str(assigned_to.id),
-                due_date=due_date_dt,
-                description=description,
-                server_id=str(interaction.guild_id),
-                created_by=str(interaction.user.id)
+            await assigned_to.send(
+                f"You have been assigned a new task in {interaction.guild.name}:\n"
+                f"**{name}**\n"
+                f"Due: {due_date_dt.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+                f"Description:\n{description}"
             )
-            session.add(new_task)
-            session.commit()
-            
-            embed = discord.Embed(
-                title="✅ Task Created",
-                description=f"Task '{name}' has been assigned to {assigned_to.display_name}",
-                color=discord.Color.green()
-            )
-            embed.add_field(name="Due Date", value=due_date_dt.strftime('%Y-%m-%d %H:%M UTC'))
-            await interaction.response.send_message(embed=embed)
-            
-            try:
-                await assigned_to.send(
-                    f"You have been assigned a new task in {interaction.guild.name}:\n"
-                    f"**{name}**\n"
-                    f"Due: {due_date_dt.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-                    f"Description:\n{description}"
-                )
-            except discord.Forbidden:
-                pass
-                
-        finally:
-            session.close()
+        except discord.Forbidden:
+            pass
             
     except ValueError as e:
         await interaction.response.send_message(
             "Invalid date format. Please use YYYY-MM-DD HH:MM format.",
             ephemeral=True
         )
+    except Exception as e:
+        print(f"Error creating task: {e}")
+        print(traceback.format_exc())
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"An error occurred while creating the task. Please try again later.",
+                ephemeral=True
+            )
+    finally:
+        if session:
+            session.close()
 
 @client.tree.command(
     name="mytasks",
@@ -385,8 +398,9 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
 )
 @log_command
 async def mytasks(interaction: discord.Interaction):
-    session = get_session()
+    session = None
     try:
+        session = get_session()
         tasks = session.query(Task).filter_by(
             assigned_to=str(interaction.user.id),
             server_id=str(interaction.guild_id),
@@ -426,14 +440,16 @@ async def mytasks(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, view=view)
         
     except Exception as e:
-        print(f"Error in mytasks command: {str(e)}")
+        print(f"Error in mytasks command: {e}")
         print(traceback.format_exc())
-        await interaction.response.send_message(
-            f"An error occurred while fetching your tasks: {str(e)}",
-            ephemeral=True
-        )
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "An error occurred while fetching your tasks. The database might be initializing. Please try again in a few seconds.",
+                ephemeral=True
+            )
     finally:
-        session.close()
+        if session:
+            session.close()
 
 @client.tree.command(
     name="taskedit",
@@ -679,17 +695,30 @@ async def showtasks(interaction: discord.Interaction, user: discord.Member):
 
 @client.event
 async def on_interaction(interaction: discord.Interaction):
-    print(f"Received interaction: {interaction.command.name if interaction.command else 'unknown'}")
     try:
-        await client.tree.process_interaction(interaction)
+        # Let the command tree handle the interaction
+        if interaction.type == discord.InteractionType.application_command:
+            command = client.tree.get_command(interaction.command.name)
+            if command:
+                await command.callback(interaction)
+            else:
+                await interaction.response.send_message(
+                    "Command not found.",
+                    ephemeral=True
+                )
     except Exception as e:
-        print(f"Error processing interaction: {e}")
+        print(f"Error in on_interaction:")
         print(traceback.format_exc())
+        
+        # Only send error message if the interaction hasn't been responded to
         if not interaction.response.is_done():
-            await interaction.response.send_message(
-                "An error occurred while processing the command.",
-                ephemeral=True
-            )
+            try:
+                await interaction.response.send_message(
+                    "An error occurred while processing the command. Please try again.",
+                    ephemeral=True
+                )
+            except:
+                pass  # Ignore any errors in error handling
 
 # Keep the bot alive
 keep_alive()

@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
 import sqlalchemy
+import threading
 
 # Get the absolute path to the data directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -12,6 +13,10 @@ DB_FILE = os.path.join(DATA_DIR, 'tasks.db')
 
 # Create data directory if it doesn't exist
 os.makedirs(DATA_DIR, exist_ok=True)
+
+# Lock for database initialization
+_init_lock = threading.Lock()
+_is_initialized = False
 
 Base = declarative_base()
 
@@ -44,38 +49,53 @@ class TaskCreator(Base):
     def __repr__(self):
         return f"<TaskCreator(user_id='{self.user_id}', server_id='{self.server_id}')>"
 
-    # Add unique constraint to prevent duplicate entries
     __table_args__ = (
         sqlalchemy.UniqueConstraint('user_id', 'server_id', name='unique_user_server'),
     )
 
 def init_db():
     """Initialize the database and create all tables"""
-    # If database exists, we need to drop and recreate all tables
-    if os.path.exists(DB_FILE):
-        # Create a temporary engine to drop all tables
-        temp_engine = create_engine(f'sqlite:///{DB_FILE}', echo=True)
-        Base.metadata.drop_all(temp_engine)
-        temp_engine.dispose()
-        
-        # Delete the old database file
-        os.remove(DB_FILE)
-        print("Removed old database file")
+    global _is_initialized
+    
+    with _init_lock:
+        if _is_initialized:
+            return
+            
+        try:
+            # If database exists, delete it
+            if os.path.exists(DB_FILE):
+                os.remove(DB_FILE)
+                print("Removed old database file")
+            
+            # Create new database engine
+            engine = create_engine(f'sqlite:///{DB_FILE}', echo=True)
+            
+            # Create all tables
+            Base.metadata.create_all(bind=engine)
+            print("Created new database with updated schema")
+            
+            _is_initialized = True
+            return engine
+            
+        except Exception as e:
+            print(f"Error initializing database: {e}")
+            raise
 
-    # Create new database engine
-    engine = create_engine(f'sqlite:///{DB_FILE}', echo=True)
-    Base.metadata.create_all(engine)
-    print("Created new database with updated schema")
-    return engine
-
-# Create database engine and initialize
+# Create engine and initialize database
 engine = init_db()
 
 # Create session factory
 Session = sessionmaker(bind=engine)
 
 def get_session():
-    return Session()
-
-# Initialize the database when the module is imported
-init_db() 
+    """Get a new database session"""
+    try:
+        session = Session()
+        # Test the connection
+        session.execute(sqlalchemy.text("SELECT 1"))
+        return session
+    except Exception as e:
+        print(f"Error creating session: {e}")
+        # Try to initialize the database if there was an error
+        init_db()
+        return Session() 
