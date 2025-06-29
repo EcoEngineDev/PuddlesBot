@@ -35,7 +35,7 @@ class PuddlesBot(discord.Client):
             await self.tree.sync(guild=None)  # None means global sync
             print("Commands synced successfully!")
             print("Available commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw, /quack")
-            print("Ticket system commands: /intmsg, /addbutton, /listmessages, /ticketstats")
+            print("Ticket system commands: /intmsg, /editintmsg, /listmessages, /ticketstats")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
             print("Full error:", traceback.format_exc())
@@ -999,12 +999,14 @@ class MessageSetupModal(discord.ui.Modal):
                 except ValueError:
                     pass
             
-            # Build description with message ID
+            # Build description with larger title and message ID
             description_text = self.description_input.value if self.description_input.value else ""
             
+            # Use larger title formatting in the description
+            full_description = f"# {self.title_input.value}\n\n{description_text}" if description_text else f"# {self.title_input.value}"
+            
             embed = discord.Embed(
-                title=self.title_input.value,
-                description=description_text,
+                description=full_description,
                 color=color
             )
             
@@ -1014,14 +1016,13 @@ class MessageSetupModal(discord.ui.Modal):
             
             # Update the embed with the message ID at the bottom
             if description_text:
-                updated_description = f"{description_text}\n\n-# Message ID: {message.id}"
+                updated_description = f"# {self.title_input.value}\n\n{description_text}\n\n-# Message ID: {message.id}"
             else:
-                updated_description = f"-# Message ID: {message.id}"
+                updated_description = f"# {self.title_input.value}\n\n-# Message ID: {message.id}"
             
             embed.description = updated_description
-            await message.edit(embed=embed)
             
-            # Save to database
+            # Save to database first
             interactive_msg = InteractiveMessage(
                 message_id=str(message.id),
                 channel_id=str(interaction.channel_id),
@@ -1034,9 +1035,13 @@ class MessageSetupModal(discord.ui.Modal):
             session.add(interactive_msg)
             session.commit()
             
+            # Show button creation options immediately
+            view = IntMsgButtonCreationView(interactive_msg.id)
+            await message.edit(embed=embed, view=view)
+            
             # Send follow-up with instructions
             await interaction.followup.send(
-                f"✅ Interactive message created! Use `/addbutton {interactive_msg.id}` to add buttons to it.",
+                f"✅ Interactive message created! Use the buttons below to add ticket/role buttons, or use `/editintmsg {interactive_msg.id}` to edit later.",
                 ephemeral=True
             )
             
@@ -1046,6 +1051,289 @@ class MessageSetupModal(discord.ui.Modal):
                 "❌ An error occurred while creating the interactive message.",
                 ephemeral=True
             )
+        finally:
+            session.close()
+
+class IntMsgButtonCreationView(discord.ui.View):
+    def __init__(self, message_id):
+        super().__init__(timeout=300)
+        self.message_id = message_id
+    
+    @discord.ui.button(label="➕ Add Ticket Button", style=discord.ButtonStyle.primary, emoji="🎫")
+    async def add_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = ButtonSetupModal(self.message_id, 'ticket')
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="➕ Add Role Button", style=discord.ButtonStyle.secondary, emoji="👤")
+    async def add_role_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = ButtonSetupModal(self.message_id, 'role')
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="✅ Finish Setup", style=discord.ButtonStyle.success, emoji="🏁")
+    async def finish_setup(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._update_interactive_message(interaction, finish=True)
+    
+    @discord.ui.button(label="🔄 Preview & Update", style=discord.ButtonStyle.blurple)
+    async def preview_update(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._update_interactive_message(interaction, finish=False)
+    
+    async def _update_interactive_message(self, interaction: discord.Interaction, finish=False):
+        session = get_session()
+        try:
+            interactive_msg = session.query(InteractiveMessage).get(self.message_id)
+            if not interactive_msg:
+                await interaction.response.send_message("❌ Interactive message not found!", ephemeral=True)
+                return
+            
+            # Get the original message
+            try:
+                channel = client.get_channel(int(interactive_msg.channel_id))
+                message = await channel.fetch_message(int(interactive_msg.message_id))
+            except:
+                await interaction.response.send_message("❌ Could not find the original message!", ephemeral=True)
+                return
+            
+            # Create new embed with message ID and larger title
+            color = discord.Color(int(interactive_msg.color, 16))
+            
+            # Build description with larger title and message ID
+            description_text = interactive_msg.description if interactive_msg.description else ""
+            if description_text:
+                updated_description = f"# {interactive_msg.title}\n\n{description_text}\n\n-# Message ID: {interactive_msg.message_id}"
+            else:
+                updated_description = f"# {interactive_msg.title}\n\n-# Message ID: {interactive_msg.message_id}"
+            
+            embed = discord.Embed(
+                description=updated_description,
+                color=color
+            )
+            
+            # Create view with buttons or finish setup
+            if interactive_msg.buttons and finish:
+                view = InteractiveMessageView(interactive_msg)
+                await message.edit(embed=embed, view=view)
+                await interaction.response.send_message("✅ Interactive message setup complete!", ephemeral=True)
+            elif interactive_msg.buttons and not finish:
+                # Show preview with current buttons but keep setup view
+                temp_view = InteractiveMessageView(interactive_msg)
+                await message.edit(embed=embed, view=temp_view)
+                # Put the setup view back after a moment
+                await interaction.response.send_message("🔄 Preview updated! The setup buttons will return in 3 seconds...", ephemeral=True)
+                await asyncio.sleep(3)
+                await message.edit(embed=embed, view=self)
+            else:
+                await message.edit(embed=embed, view=self if not finish else None)
+                if finish:
+                    await interaction.response.send_message("✅ Setup finished! (No buttons were added)", ephemeral=True)
+                else:
+                    await interaction.response.send_message("🔄 Message updated! Add some buttons to make it interactive.", ephemeral=True)
+            
+        except Exception as e:
+            print(f"Error updating interactive message: {e}")
+            await interaction.response.send_message("❌ An error occurred while updating the message.", ephemeral=True)
+        finally:
+            session.close()
+
+class EditIntMsgView(discord.ui.View):
+    def __init__(self, message_id):
+        super().__init__(timeout=300)
+        self.message_id = message_id
+    
+    @discord.ui.button(label="📝 Edit Message", style=discord.ButtonStyle.primary, emoji="✏️")
+    async def edit_message(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = EditMessageModal(self.message_id)
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="➕ Add Ticket Button", style=discord.ButtonStyle.success, emoji="🎫")
+    async def add_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = ButtonSetupModal(self.message_id, 'ticket')
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="➕ Add Role Button", style=discord.ButtonStyle.success, emoji="👤")
+    async def add_role_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = ButtonSetupModal(self.message_id, 'role')
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="🗑️ Remove Button", style=discord.ButtonStyle.danger, emoji="❌")
+    async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        session = get_session()
+        try:
+            interactive_msg = session.query(InteractiveMessage).get(self.message_id)
+            if not interactive_msg or not interactive_msg.buttons:
+                await interaction.response.send_message("❌ No buttons to remove!", ephemeral=True)
+                return
+            
+            # Create dropdown for button selection
+            options = []
+            for btn in interactive_msg.buttons:
+                btn_type_emoji = "🎫" if btn.button_type == 'ticket' else "👤"
+                options.append(discord.SelectOption(
+                    label=f"{btn.label} ({btn.button_type})",
+                    value=str(btn.id),
+                    emoji=btn_type_emoji,
+                    description=f"Style: {btn.style} | Type: {btn.button_type}"
+                ))
+            
+            view = ButtonRemovalView(self.message_id, options)
+            await interaction.response.send_message(
+                "Select which button to remove:",
+                view=view,
+                ephemeral=True
+            )
+        except Exception as e:
+            print(f"Error in remove button: {e}")
+            await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
+        finally:
+            session.close()
+    
+    @discord.ui.button(label="🔄 Update & Refresh", style=discord.ButtonStyle.blurple, emoji="🔄")
+    async def update_message(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = MessageManagementView(self.message_id)
+        await view._update_interactive_message(interaction)
+
+class EditMessageModal(discord.ui.Modal):
+    def __init__(self, message_id):
+        super().__init__(title="Edit Interactive Message")
+        self.message_id = message_id
+        
+        # Load current values
+        session = get_session()
+        try:
+            interactive_msg = session.query(InteractiveMessage).get(message_id)
+            current_title = interactive_msg.title if interactive_msg else ""
+            current_desc = interactive_msg.description if interactive_msg else ""
+            current_color = interactive_msg.color if interactive_msg else "#5865F2"
+        except:
+            current_title = ""
+            current_desc = ""
+            current_color = "#5865F2"
+        finally:
+            session.close()
+        
+        self.title_input = discord.ui.TextInput(
+            label="Message Title",
+            placeholder="Enter the new title...",
+            required=True,
+            default=current_title,
+            max_length=256
+        )
+        self.add_item(self.title_input)
+        
+        self.description_input = discord.ui.TextInput(
+            label="Message Description",
+            placeholder="Enter the new description...",
+            required=False,
+            default=current_desc,
+            style=discord.TextStyle.paragraph,
+            max_length=2000
+        )
+        self.add_item(self.description_input)
+        
+        self.color_input = discord.ui.TextInput(
+            label="Embed Color (Hex)",
+            placeholder="Enter hex color (e.g., #5865F2)",
+            required=False,
+            default=current_color,
+            max_length=7
+        )
+        self.add_item(self.color_input)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        session = get_session()
+        try:
+            interactive_msg = session.query(InteractiveMessage).get(self.message_id)
+            if not interactive_msg:
+                await interaction.response.send_message("❌ Interactive message not found!", ephemeral=True)
+                return
+            
+            # Update database
+            interactive_msg.title = self.title_input.value
+            interactive_msg.description = self.description_input.value
+            
+            # Handle color
+            color = discord.Color.blurple()
+            if self.color_input.value:
+                try:
+                    color = discord.Color(int(self.color_input.value.replace('#', ''), 16))
+                    interactive_msg.color = str(hex(color.value))
+                except ValueError:
+                    pass
+            
+            session.commit()
+            
+            # Update the actual Discord message
+            try:
+                channel = client.get_channel(int(interactive_msg.channel_id))
+                message = await channel.fetch_message(int(interactive_msg.message_id))
+                
+                # Build description with larger title and message ID
+                description_text = interactive_msg.description if interactive_msg.description else ""
+                if description_text:
+                    updated_description = f"# {interactive_msg.title}\n\n{description_text}\n\n-# Message ID: {interactive_msg.message_id}"
+                else:
+                    updated_description = f"# {interactive_msg.title}\n\n-# Message ID: {interactive_msg.message_id}"
+                
+                embed = discord.Embed(
+                    description=updated_description,
+                    color=color
+                )
+                
+                # Keep existing buttons if any
+                if interactive_msg.buttons:
+                    view = InteractiveMessageView(interactive_msg)
+                    await message.edit(embed=embed, view=view)
+                else:
+                    await message.edit(embed=embed, view=None)
+                
+                await interaction.response.send_message("✅ Interactive message updated successfully!", ephemeral=True)
+                
+            except Exception as e:
+                print(f"Error updating Discord message: {e}")
+                await interaction.response.send_message("✅ Database updated, but couldn't update Discord message. Try using 'Update & Refresh' button.", ephemeral=True)
+                
+        except Exception as e:
+            print(f"Error updating interactive message: {e}")
+            await interaction.response.send_message("❌ An error occurred while updating the message.", ephemeral=True)
+        finally:
+            session.close()
+
+class ButtonRemovalView(discord.ui.View):
+    def __init__(self, message_id, options):
+        super().__init__(timeout=60)
+        self.message_id = message_id
+        
+        select = ButtonRemovalSelect(message_id, options)
+        self.add_item(select)
+
+class ButtonRemovalSelect(discord.ui.Select):
+    def __init__(self, message_id, options):
+        super().__init__(
+            placeholder="Choose a button to remove...",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+        self.message_id = message_id
+    
+    async def callback(self, interaction: discord.Interaction):
+        session = get_session()
+        try:
+            button_id = int(self.values[0])
+            button = session.query(MessageButton).get(button_id)
+            
+            if not button:
+                await interaction.response.send_message("❌ Button not found!", ephemeral=True)
+                return
+            
+            button_label = button.label
+            session.delete(button)
+            session.commit()
+            
+            await interaction.response.send_message(f"✅ Button '{button_label}' removed successfully!", ephemeral=True)
+            
+        except Exception as e:
+            print(f"Error removing button: {e}")
+            await interaction.response.send_message("❌ An error occurred while removing the button.", ephemeral=True)
         finally:
             session.close()
 
@@ -1084,18 +1372,17 @@ class MessageManagementView(discord.ui.View):
                 await interaction.response.send_message("❌ Could not find the original message!", ephemeral=True)
                 return
             
-            # Create new embed with message ID
+            # Create new embed with message ID and larger title
             color = discord.Color(int(interactive_msg.color, 16))
             
-            # Build description with message ID
+            # Build description with larger title and message ID
             description_text = interactive_msg.description if interactive_msg.description else ""
             if description_text:
-                updated_description = f"{description_text}\n\n-# Message ID: {interactive_msg.message_id}"
+                updated_description = f"# {interactive_msg.title}\n\n{description_text}\n\n-# Message ID: {interactive_msg.message_id}"
             else:
-                updated_description = f"-# Message ID: {interactive_msg.message_id}"
+                updated_description = f"# {interactive_msg.title}\n\n-# Message ID: {interactive_msg.message_id}"
             
             embed = discord.Embed(
-                title=interactive_msg.title,
                 description=updated_description,
                 color=color
             )
@@ -1127,16 +1414,16 @@ async def intmsg(interaction: discord.Interaction):
     await interaction.response.send_modal(modal)
 
 @client.tree.command(
-    name="addbutton",
-    description="Add a button to an existing interactive message"
+    name="editintmsg",
+    description="Edit an existing interactive message and its buttons"
 )
 @app_commands.describe(
-    message_id="The ID of the interactive message to add a button to"
+    message_id="The ID of the interactive message to edit"
 )
 @checks.has_permissions(manage_messages=True)
 @log_command
-async def addbutton(interaction: discord.Interaction, message_id: str):
-    """Add buttons to an interactive message"""
+async def editintmsg(interaction: discord.Interaction, message_id: str):
+    """Edit an interactive message and its buttons"""
     session = get_session()
     try:
         # Try to convert message_id to int for database lookup
@@ -1155,19 +1442,48 @@ async def addbutton(interaction: discord.Interaction, message_id: str):
             await interaction.response.send_message("❌ That message doesn't belong to this server!", ephemeral=True)
             return
         
-        view = MessageManagementView(db_message_id)
-        await interaction.response.send_message(
-            f"**Managing Interactive Message:** {interactive_msg.title}\n\n"
-            "Choose what type of button you want to add:",
-            view=view,
-            ephemeral=True
+        # Show comprehensive editing options
+        view = EditIntMsgView(db_message_id)
+        
+        # Show current message info
+        button_count = len(interactive_msg.buttons)
+        ticket_buttons = sum(1 for b in interactive_msg.buttons if b.button_type == 'ticket')
+        role_buttons = sum(1 for b in interactive_msg.buttons if b.button_type == 'role')
+        
+        embed = discord.Embed(
+            title="🛠️ Editing Interactive Message",
+            description=f"**Message:** {interactive_msg.title}\n"
+                       f"**Current Buttons:** {button_count} total ({ticket_buttons} ticket, {role_buttons} role)\n"
+                       f"**Created:** {interactive_msg.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+                       f"Choose what you want to edit:",
+            color=discord.Color.orange()
         )
         
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        
     except Exception as e:
-        print(f"Error in addbutton command: {e}")
+        print(f"Error in editintmsg command: {e}")
         await interaction.response.send_message("❌ An error occurred while processing the command.", ephemeral=True)
     finally:
         session.close()
+
+# OBSOLETE: /addbutton command replaced by integrated /intmsg workflow
+# @client.tree.command(
+#     name="addbutton",
+#     description="Add a button to an existing interactive message"
+# )
+# @app_commands.describe(
+#     message_id="The ID of the interactive message to add a button to"
+# )
+# @checks.has_permissions(manage_messages=True)
+# @log_command
+# async def addbutton(interaction: discord.Interaction, message_id: str):
+#     """Add buttons to an interactive message"""
+#     # This command has been replaced by the integrated /intmsg workflow
+#     await interaction.response.send_message(
+#         "❌ This command has been replaced! Use `/intmsg` to create messages with buttons, or `/editintmsg` to edit existing ones.",
+#         ephemeral=True
+#     )
 
 @client.tree.command(
     name="listmessages",

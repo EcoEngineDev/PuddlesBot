@@ -372,7 +372,7 @@ class ButtonSetupModal(discord.ui.Modal):
             session.add(button)
             session.commit()
             
-            await interaction.response.send_message(f"✅ {self.button_type.title()} button added successfully!", ephemeral=True)
+            await interaction.response.send_message(f"✅ {self.button_type.title()} button added successfully! Use 'Update & Refresh' or '/editintmsg' to manage more buttons.", ephemeral=True)
             
         except Exception as e:
             print(f"Error adding button: {e}")
