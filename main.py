@@ -14,6 +14,10 @@ import sys
 import functools
 from discord.app_commands import checks
 import sqlalchemy
+from ticket_system import (
+    InteractiveMessage, MessageButton, Ticket, 
+    InteractiveMessageView, ButtonSetupModal
+)
 
 # Initialize bot with all intents
 class PuddlesBot(discord.Client):
@@ -31,6 +35,7 @@ class PuddlesBot(discord.Client):
             await self.tree.sync(guild=None)  # None means global sync
             print("Commands synced successfully!")
             print("Available commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw, /quack")
+            print("Ticket system commands: /intmsg, /addbutton, /listmessages, /ticketstats")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
             print("Full error:", traceback.format_exc())
@@ -39,6 +44,9 @@ class PuddlesBot(discord.Client):
         self.scheduler.add_job(self.check_due_tasks, 'interval', hours=1)
         # Add backup job to run every 6 hours
         self.scheduler.add_job(self.backup_database, 'interval', hours=6)
+        
+        # Load persistent views for ticket system
+        await self.load_persistent_views()
 
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
@@ -82,6 +90,59 @@ class PuddlesBot(discord.Client):
         except Exception as e:
             print(f"Error creating database backup: {e}")
             print(traceback.format_exc())
+    
+    async def load_persistent_views(self):
+        """Load persistent views for interactive messages and tickets"""
+        session = get_session()
+        try:
+            # Load interactive message views
+            interactive_messages = session.query(InteractiveMessage).all()
+            restored_messages = 0
+            
+            for msg_data in interactive_messages:
+                try:
+                    # Get the channel and message
+                    channel = self.get_channel(int(msg_data.channel_id))
+                    if not channel:
+                        continue
+                    
+                    message = await channel.fetch_message(int(msg_data.message_id))
+                    if not message:
+                        continue
+                    
+                    # Only add view if there are buttons
+                    if msg_data.buttons:
+                        view = InteractiveMessageView(msg_data)
+                        # Don't edit the message, just add the view for future interactions
+                        self.add_view(view, message_id=int(msg_data.message_id))
+                        restored_messages += 1
+                        
+                except Exception as e:
+                    print(f"Error restoring interactive message {msg_data.id}: {e}")
+                    continue
+            
+            # Load ticket control views
+            open_tickets = session.query(Ticket).filter_by(status="open").all()
+            restored_tickets = 0
+            
+            for ticket in open_tickets:
+                try:
+                    channel = self.get_channel(int(ticket.channel_id))
+                    if channel:
+                        view = TicketControlView(ticket.id)
+                        self.add_view(view)
+                        restored_tickets += 1
+                except Exception as e:
+                    print(f"Error restoring ticket view {ticket.id}: {e}")
+                    continue
+            
+            print(f"Restored {restored_messages} interactive message views and {restored_tickets} ticket views")
+            
+        except Exception as e:
+            print(f"Error loading persistent views: {e}")
+            print(traceback.format_exc())
+        finally:
+            session.close()
 
 client = PuddlesBot()
 
@@ -895,6 +956,293 @@ async def alltasks(interaction: discord.Interaction):
         session.close()
 
 # Removed custom on_interaction handler - Discord.py handles command processing automatically
+
+# ============= TICKET SYSTEM COMMANDS =============
+
+class MessageSetupModal(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="Create Interactive Message")
+        
+        self.title_input = discord.ui.TextInput(
+            label="Message Title",
+            placeholder="Enter the title for your interactive message...",
+            required=True,
+            max_length=256
+        )
+        self.add_item(self.title_input)
+        
+        self.description_input = discord.ui.TextInput(
+            label="Message Description", 
+            placeholder="Enter the description for your interactive message...",
+            required=False,
+            style=discord.TextStyle.paragraph,
+            max_length=2000
+        )
+        self.add_item(self.description_input)
+        
+        self.color_input = discord.ui.TextInput(
+            label="Embed Color (Hex)",
+            placeholder="Enter hex color (e.g., #5865F2) or leave blank for default",
+            required=False,
+            max_length=7
+        )
+        self.add_item(self.color_input)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        session = get_session()
+        try:
+            # Create embed
+            color = discord.Color.blurple()
+            if self.color_input.value:
+                try:
+                    color = discord.Color(int(self.color_input.value.replace('#', ''), 16))
+                except ValueError:
+                    pass
+            
+            embed = discord.Embed(
+                title=self.title_input.value,
+                description=self.description_input.value if self.description_input.value else None,
+                color=color
+            )
+            embed.set_footer(text="Use the buttons below to interact!")
+            
+            # Send the message
+            message = await interaction.response.send_message(embed=embed, view=None)
+            message = await interaction.original_response()
+            
+            # Save to database
+            interactive_msg = InteractiveMessage(
+                message_id=str(message.id),
+                channel_id=str(interaction.channel_id),
+                server_id=str(interaction.guild_id),
+                title=self.title_input.value,
+                description=self.description_input.value,
+                color=str(hex(color.value)),
+                created_by=str(interaction.user.id)
+            )
+            session.add(interactive_msg)
+            session.commit()
+            
+            # Send follow-up with instructions
+            await interaction.followup.send(
+                f"✅ Interactive message created! Use `/addbutton {interactive_msg.id}` to add buttons to it.",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            print(f"Error creating interactive message: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while creating the interactive message.",
+                ephemeral=True
+            )
+        finally:
+            session.close()
+
+class MessageManagementView(discord.ui.View):
+    def __init__(self, message_id):
+        super().__init__(timeout=300)
+        self.message_id = message_id
+    
+    @discord.ui.button(label="Add Ticket Button", style=discord.ButtonStyle.primary, emoji="🎫")
+    async def add_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = ButtonSetupModal(self.message_id, 'ticket')
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="Add Role Button", style=discord.ButtonStyle.secondary, emoji="👤")
+    async def add_role_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = ButtonSetupModal(self.message_id, 'role')
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="Update Message", style=discord.ButtonStyle.success, emoji="🔄")
+    async def update_message(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._update_interactive_message(interaction)
+    
+    async def _update_interactive_message(self, interaction: discord.Interaction):
+        session = get_session()
+        try:
+            interactive_msg = session.query(InteractiveMessage).get(self.message_id)
+            if not interactive_msg:
+                await interaction.response.send_message("❌ Interactive message not found!", ephemeral=True)
+                return
+            
+            # Get the original message
+            try:
+                channel = client.get_channel(int(interactive_msg.channel_id))
+                message = await channel.fetch_message(int(interactive_msg.message_id))
+            except:
+                await interaction.response.send_message("❌ Could not find the original message!", ephemeral=True)
+                return
+            
+            # Create new embed
+            color = discord.Color(int(interactive_msg.color, 16))
+            embed = discord.Embed(
+                title=interactive_msg.title,
+                description=interactive_msg.description,
+                color=color
+            )
+            embed.set_footer(text="Use the buttons below to interact!")
+            
+            # Create view with buttons
+            if interactive_msg.buttons:
+                view = InteractiveMessageView(interactive_msg)
+                await message.edit(embed=embed, view=view)
+            else:
+                await message.edit(embed=embed, view=None)
+            
+            await interaction.response.send_message("✅ Interactive message updated with current buttons!", ephemeral=True)
+            
+        except Exception as e:
+            print(f"Error updating interactive message: {e}")
+            await interaction.response.send_message("❌ An error occurred while updating the message.", ephemeral=True)
+        finally:
+            session.close()
+
+@client.tree.command(
+    name="intmsg",
+    description="Create an interactive message with customizable buttons"
+)
+@checks.has_permissions(manage_messages=True)
+@log_command
+async def intmsg(interaction: discord.Interaction):
+    """Create an interactive message with buttons for tickets and roles"""
+    modal = MessageSetupModal()
+    await interaction.response.send_modal(modal)
+
+@client.tree.command(
+    name="addbutton",
+    description="Add a button to an existing interactive message"
+)
+@app_commands.describe(
+    message_id="The ID of the interactive message to add a button to"
+)
+@checks.has_permissions(manage_messages=True)
+@log_command
+async def addbutton(interaction: discord.Interaction, message_id: int):
+    """Add buttons to an interactive message"""
+    session = get_session()
+    try:
+        interactive_msg = session.query(InteractiveMessage).get(message_id)
+        if not interactive_msg:
+            await interaction.response.send_message("❌ Interactive message not found!", ephemeral=True)
+            return
+        
+        if str(interaction.guild_id) != interactive_msg.server_id:
+            await interaction.response.send_message("❌ That message doesn't belong to this server!", ephemeral=True)
+            return
+        
+        view = MessageManagementView(message_id)
+        await interaction.response.send_message(
+            f"**Managing Interactive Message:** {interactive_msg.title}\n\n"
+            "Choose what type of button you want to add:",
+            view=view,
+            ephemeral=True
+        )
+        
+    except Exception as e:
+        print(f"Error in addbutton command: {e}")
+        await interaction.response.send_message("❌ An error occurred while processing the command.", ephemeral=True)
+    finally:
+        session.close()
+
+@client.tree.command(
+    name="listmessages",
+    description="List all interactive messages in this server"
+)
+@checks.has_permissions(manage_messages=True)
+@log_command
+async def listmessages(interaction: discord.Interaction):
+    """List all interactive messages in the server"""
+    session = get_session()
+    try:
+        messages = session.query(InteractiveMessage).filter_by(
+            server_id=str(interaction.guild_id)
+        ).order_by(InteractiveMessage.created_at.desc()).all()
+        
+        if not messages:
+            await interaction.response.send_message("❌ No interactive messages found in this server!", ephemeral=True)
+            return
+        
+        embed = discord.Embed(
+            title="📋 Interactive Messages",
+            description="Here are all the interactive messages in this server:",
+            color=discord.Color.blue()
+        )
+        
+        for msg in messages:
+            button_count = len(msg.buttons)
+            ticket_buttons = sum(1 for b in msg.buttons if b.button_type == 'ticket')
+            role_buttons = sum(1 for b in msg.buttons if b.button_type == 'role')
+            
+            value = (
+                f"**ID:** {msg.id}\n"
+                f"**Channel:** <#{msg.channel_id}>\n"
+                f"**Buttons:** {button_count} total ({ticket_buttons} ticket, {role_buttons} role)\n"
+                f"**Created:** {msg.created_at.strftime('%Y-%m-%d %H:%M UTC')}"
+            )
+            embed.add_field(name=msg.title, value=value, inline=False)
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        print(f"Error in listmessages command: {e}")
+        await interaction.response.send_message("❌ An error occurred while fetching messages.", ephemeral=True)
+    finally:
+        session.close()
+
+@client.tree.command(
+    name="ticketstats",
+    description="View ticket statistics for this server"
+)
+@checks.has_permissions(manage_messages=True)
+@log_command
+async def ticketstats(interaction: discord.Interaction):
+    """View ticket statistics"""
+    session = get_session()
+    try:
+        total_tickets = session.query(Ticket).filter_by(server_id=str(interaction.guild_id)).count()
+        open_tickets = session.query(Ticket).filter_by(server_id=str(interaction.guild_id), status="open").count()
+        closed_tickets = session.query(Ticket).filter_by(server_id=str(interaction.guild_id), status="closed").count()
+        
+        embed = discord.Embed(
+            title="🎫 Ticket Statistics",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Total Tickets", value=str(total_tickets), inline=True)
+        embed.add_field(name="Open Tickets", value=str(open_tickets), inline=True)
+        embed.add_field(name="Closed Tickets", value=str(closed_tickets), inline=True)
+        
+        if total_tickets > 0:
+            # Recent tickets
+            recent_tickets = session.query(Ticket).filter_by(
+                server_id=str(interaction.guild_id)
+            ).order_by(Ticket.created_at.desc()).limit(5).all()
+            
+            recent_list = []
+            for ticket in recent_tickets:
+                try:
+                    creator = await client.fetch_user(int(ticket.creator_id))
+                    creator_name = creator.display_name
+                except:
+                    creator_name = "Unknown"
+                
+                status_emoji = "🟢" if ticket.status == "open" else "🔴"
+                recent_list.append(f"{status_emoji} Ticket #{ticket.ticket_id} - {creator_name}")
+            
+            embed.add_field(
+                name="Recent Tickets",
+                value="\n".join(recent_list) if recent_list else "None",
+                inline=False
+            )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        print(f"Error in ticketstats command: {e}")
+        await interaction.response.send_message("❌ An error occurred while fetching statistics.", ephemeral=True)
+    finally:
+        session.close()
+
+# ============= END TICKET SYSTEM COMMANDS =============
 
 # Keep the bot alive
 keep_alive()
