@@ -405,6 +405,22 @@ async def mytasks(interaction: discord.Interaction):
             description="Select a task from the dropdown to view details and mark as complete:",
             color=discord.Color.blue()
         )
+
+        # Add a summary of tasks to the initial embed
+        for task in tasks:
+            due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
+            try:
+                creator = await client.fetch_user(int(task.created_by)) if task.created_by != "0" else None
+                creator_name = creator.display_name if creator else "Unknown"
+            except:
+                creator_name = "Unknown"
+
+            value = (
+                f"Due: {due_date}\n"
+                f"Created by: {creator_name}\n"
+                f"Description: {task.description[:100]}..." if len(task.description) > 100 else task.description
+            )
+            embed.add_field(name=task.name, value=value, inline=False)
         
         view = TaskView(tasks, interaction.user)
         await interaction.response.send_message(embed=embed, view=view)
@@ -525,11 +541,19 @@ async def oldtasks(interaction: discord.Interaction):
             completed_time = task.completed_at.strftime('%Y-%m-%d %H:%M UTC') if task.completed_at else "Unknown"
             due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
             
-            embed.add_field(
-                name=task.name,
-                value=f"Due Date: {due_date}\nCompleted: {completed_time}\nDescription: {task.description}",
-                inline=False
+            try:
+                creator = await client.fetch_user(int(task.created_by)) if task.created_by != "0" else None
+                creator_name = creator.display_name if creator else "Unknown"
+            except:
+                creator_name = "Unknown"
+            
+            value = (
+                f"Due Date: {due_date}\n"
+                f"Completed: {completed_time}\n"
+                f"Created by: {creator_name}\n"
+                f"Description: {task.description}"
             )
+            embed.add_field(name=task.name, value=value, inline=False)
         
         await interaction.response.send_message(embed=embed)
         

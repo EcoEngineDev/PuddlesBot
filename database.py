@@ -27,7 +27,7 @@ class Task(Base):
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     server_id = Column(String, nullable=False)  # Discord server ID
-    created_by = Column(String, nullable=False)  # Discord user ID of task creator
+    created_by = Column(String, nullable=False, default="0")  # Discord user ID of task creator
 
     def __repr__(self):
         return f"<Task(name='{self.name}', assigned_to='{self.assigned_to}', due_date='{self.due_date}')>"
@@ -49,21 +49,33 @@ class TaskCreator(Base):
         sqlalchemy.UniqueConstraint('user_id', 'server_id', name='unique_user_server'),
     )
 
-# Create database engine with absolute path
-engine = create_engine(f'sqlite:///{DB_FILE}', echo=True)
+def init_db():
+    """Initialize the database and create all tables"""
+    # If database exists, we need to drop and recreate all tables
+    if os.path.exists(DB_FILE):
+        # Create a temporary engine to drop all tables
+        temp_engine = create_engine(f'sqlite:///{DB_FILE}', echo=True)
+        Base.metadata.drop_all(temp_engine)
+        temp_engine.dispose()
+        
+        # Delete the old database file
+        os.remove(DB_FILE)
+        print("Removed old database file")
 
-# Create all tables
-Base.metadata.create_all(engine)
+    # Create new database engine
+    engine = create_engine(f'sqlite:///{DB_FILE}', echo=True)
+    Base.metadata.create_all(engine)
+    print("Created new database with updated schema")
+    return engine
+
+# Create database engine and initialize
+engine = init_db()
 
 # Create session factory
 Session = sessionmaker(bind=engine)
 
 def get_session():
     return Session()
-
-def init_db():
-    """Initialize the database and create all tables"""
-    Base.metadata.create_all(engine)
 
 # Initialize the database when the module is imported
 init_db() 
