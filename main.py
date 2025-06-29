@@ -15,8 +15,7 @@ class PuddlesBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
-        intents.members = True  # Enable members intent
-        intents.presences = True  # Enable presence intent
+        intents.members = True  # Needed for member resolution
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self.scheduler = AsyncIOScheduler()
