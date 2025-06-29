@@ -271,7 +271,8 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
                 name=name,
                 assigned_to=str(assigned_to.id),
                 due_date=due_date_dt,
-                description=description
+                description=description,
+                server_id=str(interaction.guild_id)  # Add server ID
             )
             print("Created new task object")
             session.add(new_task)
@@ -289,7 +290,8 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
             
             try:
                 await assigned_to.send(
-                    f"You have been assigned a new task: **{name}**\n"
+                    f"You have been assigned a new task in {interaction.guild.name}:\n"
+                    f"**{name}**\n"
                     f"Due: {due_date_dt.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
                     f"Description:\n{description}"
                 )
@@ -318,6 +320,7 @@ async def mytasks(interaction: discord.Interaction):
     try:
         tasks = session.query(Task).filter_by(
             assigned_to=str(interaction.user.id),
+            server_id=str(interaction.guild_id),
             completed=False
         ).order_by(Task.due_date).all()
         
@@ -424,63 +427,50 @@ async def quack(interaction: discord.Interaction):
 
 @client.tree.command(
     name="oldtasks",
-    description="View completed tasks and their status"
+    description="View completed tasks"
 )
+@log_command
 async def oldtasks(interaction: discord.Interaction):
     session = get_session()
     try:
-        completed_tasks = session.query(Task).filter_by(completed=True).order_by(Task.due_date.desc()).all()
+        tasks = session.query(Task).filter_by(
+            assigned_to=str(interaction.user.id),
+            server_id=str(interaction.guild_id),
+            completed=True
+        ).order_by(Task.completed_at.desc()).all()
         
-        if not completed_tasks:
-            await interaction.response.send_message("No completed tasks found!")
+        if not tasks:
+            await interaction.response.send_message(
+                "You have no completed tasks!",
+                ephemeral=True
+            )
             return
             
         embed = discord.Embed(
-            title="Completed Tasks History",
-            description="Here are all completed tasks and their status:",
-            color=discord.Color.gold()
+            title="Your Completed Tasks",
+            description="Here are your completed tasks:",
+            color=discord.Color.green()
         )
         
-        # Group tasks by user
-        tasks_by_user = {}
-        for task in completed_tasks:
-            user_id = task.assigned_to
-            if user_id not in tasks_by_user:
-                tasks_by_user[user_id] = []
-            tasks_by_user[user_id].append(task)
+        for task in tasks:
+            completed_time = task.completed_at.strftime('%Y-%m-%d %H:%M UTC') if task.completed_at else "Unknown"
+            due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
+            
+            embed.add_field(
+                name=task.name,
+                value=f"Due Date: {due_date}\nCompleted: {completed_time}\nDescription: {task.description}",
+                inline=False
+            )
         
-        view = discord.ui.View(timeout=180)
+        await interaction.response.send_message(embed=embed)
         
-        # Add tasks to embed, grouped by user
-        for user_id, user_tasks in tasks_by_user.items():
-            try:
-                user = await client.fetch_user(int(user_id))
-                if not user:
-                    continue
-                    
-                # Add user profile button
-                view.add_item(UserButton(user))
-                
-                tasks_text = []
-                for task in user_tasks:
-                    # Check if task was completed before or after due date
-                    completed_status = "✅ On time" if task.completed_at <= task.due_date else "⚠️ Late"
-                    tasks_text.append(
-                        f"• {task.name}\n"
-                        f"  Due: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\n"
-                        f"  Status: {completed_status}"
-                    )
-                
-                embed.add_field(
-                    name=f"Tasks completed by {user.display_name}",
-                    value="\n".join(tasks_text) or "No completed tasks",
-                    inline=False
-                )
-            except:
-                continue
-        
-        await interaction.response.send_message(embed=embed, view=view)
-        
+    except Exception as e:
+        print(f"Error in oldtasks command: {str(e)}")
+        print(traceback.format_exc())
+        await interaction.response.send_message(
+            f"An error occurred while fetching your completed tasks: {str(e)}",
+            ephemeral=True
+        )
     finally:
         session.close()
 
