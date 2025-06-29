@@ -37,6 +37,8 @@ class PuddlesBot(discord.Client):
         
         self.scheduler.start()
         self.scheduler.add_job(self.check_due_tasks, 'interval', hours=1)
+        # Add backup job to run every 6 hours
+        self.scheduler.add_job(self.backup_database, 'interval', hours=6)
 
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
@@ -70,6 +72,16 @@ class PuddlesBot(discord.Client):
     async def on_error(self, event, *args, **kwargs):
         print(f"Error in {event}:", file=sys.stderr)
         traceback.print_exc()
+
+    async def backup_database(self):
+        """Create a backup of the database"""
+        try:
+            from database import create_backup
+            create_backup()
+            print(f"Database backup created successfully at {datetime.utcnow()}")
+        except Exception as e:
+            print(f"Error creating database backup: {e}")
+            print(traceback.format_exc())
 
 client = PuddlesBot()
 
@@ -275,14 +287,22 @@ async def can_create_tasks(interaction: discord.Interaction) -> bool:
 
 @client.tree.command(
     name="tcw",
-    description="Add a user to the task creator whitelist (Admin only)"
+    description="Add or remove a user from the task creator whitelist (Admin only)"
 )
 @app_commands.describe(
-    user="The user to add to the task creator whitelist"
+    user="The user to add/remove from the task creator whitelist",
+    action="Whether to add or remove the user (default: add)"
 )
 @checks.has_permissions(administrator=True)
 @log_command
-async def tcw(interaction: discord.Interaction, user: discord.Member):
+async def tcw(interaction: discord.Interaction, user: discord.Member, action: str = "add"):
+    if action.lower() not in ["add", "remove"]:
+        await interaction.response.send_message(
+            "Invalid action. Please use 'add' or 'remove'.",
+            ephemeral=True
+        )
+        return
+
     session = get_session()
     try:
         # Check if user is already whitelisted
@@ -291,32 +311,48 @@ async def tcw(interaction: discord.Interaction, user: discord.Member):
             server_id=str(interaction.guild_id)
         ).first()
         
-        if existing:
+        if action.lower() == "add":
+            if existing:
+                await interaction.response.send_message(
+                    f"{user.display_name} is already whitelisted to create tasks.",
+                    ephemeral=True
+                )
+                return
+                
+            # Add user to whitelist
+            creator = TaskCreator(
+                user_id=str(user.id),
+                server_id=str(interaction.guild_id),
+                added_by=str(interaction.user.id)
+            )
+            session.add(creator)
+            session.commit()
+            
             await interaction.response.send_message(
-                f"{user.display_name} is already whitelisted to create tasks.",
+                f"✅ {user.display_name} has been added to the task creator whitelist.",
                 ephemeral=True
             )
-            return
+        else:  # remove
+            if not existing:
+                await interaction.response.send_message(
+                    f"{user.display_name} is not in the task creator whitelist.",
+                    ephemeral=True
+                )
+                return
             
-        # Add user to whitelist
-        creator = TaskCreator(
-            user_id=str(user.id),
-            server_id=str(interaction.guild_id),
-            added_by=str(interaction.user.id)
-        )
-        session.add(creator)
-        session.commit()
-        
-        await interaction.response.send_message(
-            f"✅ {user.display_name} has been added to the task creator whitelist.",
-            ephemeral=True
-        )
+            session.delete(existing)
+            session.commit()
+            
+            await interaction.response.send_message(
+                f"✅ {user.display_name} has been removed from the task creator whitelist.",
+                ephemeral=True
+            )
         
     except Exception as e:
         print(f"Error in tcw command: {str(e)}")
         print(traceback.format_exc())
         await interaction.response.send_message(
-            f"An error occurred while adding the user to the whitelist: {str(e)}",
+            f"An error occurred while managing the whitelist: {str(e)}",
             ephemeral=True
         )
     finally:

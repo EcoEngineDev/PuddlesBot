@@ -5,18 +5,34 @@ from datetime import datetime
 import os
 import sqlalchemy
 import threading
+import shutil
+import time
 
 # Get the absolute path to the data directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
+BACKUP_DIR = os.path.join(DATA_DIR, 'backups')
 DB_FILE = os.path.join(DATA_DIR, 'tasks.db')
 
-# Create data directory if it doesn't exist
+# Create data and backup directories if they don't exist
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(BACKUP_DIR, exist_ok=True)
 
 # Lock for database initialization
 _init_lock = threading.Lock()
 _is_initialized = False
+
+def create_backup():
+    """Create a backup of the database file"""
+    if os.path.exists(DB_FILE):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_file = os.path.join(BACKUP_DIR, f'tasks_backup_{timestamp}.db')
+        shutil.copy2(DB_FILE, backup_file)
+        
+        # Clean up old backups (keep last 5)
+        backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith('tasks_backup_')])
+        for old_backup in backups[:-5]:  # Keep only the 5 most recent backups
+            os.remove(os.path.join(BACKUP_DIR, old_backup))
 
 Base = declarative_base()
 
