@@ -30,7 +30,7 @@ class PuddlesBot(discord.Client):
         try:
             await self.tree.sync(guild=None)  # None means global sync
             print("Commands synced successfully!")
-            print("Available commands: /task, /mytasks, /taskedit, /quack")
+            print("Available commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw, /quack")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
             print("Full error:", traceback.format_exc())
@@ -894,32 +894,7 @@ async def alltasks(interaction: discord.Interaction):
     finally:
         session.close()
 
-@client.event
-async def on_interaction(interaction: discord.Interaction):
-    try:
-        # Let the command tree handle the interaction
-        if interaction.type == discord.InteractionType.application_command:
-            command = client.tree.get_command(interaction.command.name)
-            if command:
-                await command.callback(interaction)
-            else:
-                await interaction.response.send_message(
-                    "Command not found.",
-                    ephemeral=True
-                )
-    except Exception as e:
-        print(f"Error in on_interaction:")
-        print(traceback.format_exc())
-        
-        # Only send error message if the interaction hasn't been responded to
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.send_message(
-                    "An error occurred while processing the command. Please try again.",
-                    ephemeral=True
-                )
-            except:
-                pass  # Ignore any errors in error handling
+# Removed custom on_interaction handler - Discord.py handles command processing automatically
 
 # Keep the bot alive
 keep_alive()
