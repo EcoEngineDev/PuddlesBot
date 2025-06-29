@@ -40,6 +40,8 @@ class MessageButton(Base):
     ticket_name_format = Column(String)
     ticket_id_start = Column(Integer, default=1)
     ticket_description = Column(Text)
+    ticket_questions = Column(Text)  # JSON string of questions
+    ticket_visible_roles = Column(Text)  # Comma-separated role IDs
     
     # Role fields
     role_id = Column(String)
@@ -60,6 +62,16 @@ class Ticket(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     closed_at = Column(DateTime)
     closed_by = Column(String)
+    questions_answers = Column(Text)  # JSON string of Q&A
+
+class IntMsgCreator(Base):
+    __tablename__ = 'intmsg_creators'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False)
+    server_id = Column(String, nullable=False)
+    added_by = Column(String, nullable=False)
+    added_at = Column(DateTime, default=datetime.utcnow)
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -95,8 +107,18 @@ class TicketButton(discord.ui.Button):
         self.button_data = button_data
     
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        # Check if there are questions to ask first
+        if self.button_data.ticket_questions:
+            questions = [q.strip() for q in self.button_data.ticket_questions.split('|') if q.strip()]
+            if questions:
+                modal = TicketQuestionsModal(self.button_data, questions)
+                await interaction.response.send_modal(modal)
+                return
         
+        # No questions, proceed with ticket creation
+        await self.create_ticket(interaction)
+    
+    async def create_ticket(self, interaction, answers=None):
         session = get_session()
         try:
             # Check existing ticket
@@ -146,6 +168,19 @@ class TicketButton(discord.ui.Button):
                         read_messages=True, send_messages=True, manage_messages=True
                     )
             
+            # Add custom visible roles if specified
+            if self.button_data.ticket_visible_roles:
+                role_ids = [rid.strip() for rid in self.button_data.ticket_visible_roles.split(',') if rid.strip()]
+                for role_id in role_ids:
+                    try:
+                        role = guild.get_role(int(role_id))
+                        if role:
+                            overwrites[role] = discord.PermissionOverwrite(
+                                read_messages=True, send_messages=True, manage_messages=True
+                            )
+                    except ValueError:
+                        pass  # Invalid role ID
+            
             ticket_channel = await guild.create_text_channel(
                 name=channel_name, category=category, overwrites=overwrites
             )
@@ -156,7 +191,8 @@ class TicketButton(discord.ui.Button):
                 channel_id=str(ticket_channel.id),
                 server_id=str(guild.id),
                 creator_id=str(interaction.user.id),
-                button_id=self.button_data.id
+                button_id=self.button_data.id,
+                questions_answers=answers  # JSON string of answers
             )
             session.add(new_ticket)
             session.commit()
@@ -171,22 +207,70 @@ class TicketButton(discord.ui.Button):
             embed.add_field(name="Created by", value=interaction.user.mention, inline=True)
             embed.add_field(name="Ticket ID", value=f"#{next_ticket_id}", inline=True)
             
+            # Add question answers if provided
+            if answers:
+                import json
+                try:
+                    qa_data = json.loads(answers)
+                    qa_text = "\n".join([f"**{qa['question']}**\n{qa['answer']}" for qa in qa_data])
+                    embed.add_field(name="📝 Information Provided", value=qa_text, inline=False)
+                except:
+                    pass
+            
             view = TicketControlView(new_ticket.id)
             await ticket_channel.send(embed=embed, view=view)
             
-            await interaction.followup.send(
-                f"✅ Ticket created! Please check {ticket_channel.mention}",
-                ephemeral=True
-            )
+            # Send response (either initial response or followup depending on how we got here)
+            response_text = f"✅ Ticket created! Please check {ticket_channel.mention}"
+            if interaction.response.is_done():
+                await interaction.followup.send(response_text, ephemeral=True)
+            else:
+                await interaction.response.send_message(response_text, ephemeral=True)
             
         except Exception as e:
             print(f"Error creating ticket: {e}")
-            await interaction.followup.send(
-                "❌ An error occurred while creating your ticket. Please try again.",
-                ephemeral=True
-            )
+            error_text = "❌ An error occurred while creating your ticket. Please try again."
+            if interaction.response.is_done():
+                await interaction.followup.send(error_text, ephemeral=True)
+            else:
+                await interaction.response.send_message(error_text, ephemeral=True)
         finally:
             session.close()
+
+class TicketQuestionsModal(discord.ui.Modal):
+    def __init__(self, button_data, questions):
+        super().__init__(title="Ticket Information", timeout=300)
+        self.button_data = button_data
+        self.questions = questions[:5]  # Limit to 5 questions due to Discord modal limits
+        
+        # Add text inputs for each question
+        for i, question in enumerate(self.questions):
+            text_input = discord.ui.TextInput(
+                label=question[:45],  # Discord label limit
+                placeholder=f"Please answer: {question}"[:100],  # Placeholder limit
+                required=True,
+                max_length=1000,
+                style=discord.TextStyle.paragraph if len(question) > 50 else discord.TextStyle.short
+            )
+            self.add_item(text_input)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        # Collect answers
+        answers = []
+        for i, item in enumerate(self.children):
+            if isinstance(item, discord.ui.TextInput):
+                answers.append({
+                    "question": self.questions[i],
+                    "answer": item.value
+                })
+        
+        # Convert to JSON for storage
+        import json
+        answers_json = json.dumps(answers)
+        
+        # Create the ticket with answers
+        ticket_button = TicketButton(self.button_data)
+        await ticket_button.create_ticket(interaction, answers_json)
 
 class RoleButton(discord.ui.Button):
     def __init__(self, button_data):

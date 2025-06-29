@@ -15,7 +15,7 @@ import functools
 from discord.app_commands import checks
 import sqlalchemy
 from ticket_system import (
-    InteractiveMessage, MessageButton, Ticket, 
+    InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal
 )
 
@@ -35,7 +35,7 @@ class PuddlesBot(discord.Client):
             await self.tree.sync(guild=None)  # None means global sync
             print("Commands synced successfully!")
             print("Available commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw, /quack")
-            print("Ticket system commands: /intmsg, /editintmsg, /listmessages, /ticketstats")
+            print("Ticket system commands: /intmsg, /editintmsg, /listmessages, /ticketstats, /imw")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
             print("Full error:", traceback.format_exc())
@@ -323,6 +323,23 @@ def log_command(func: Callable) -> Callable:
                     ephemeral=True
                 )
     return wrapper
+
+async def can_create_intmsg(interaction: discord.Interaction) -> bool:
+    """Check if user can create interactive messages"""
+    # Check if user is administrator
+    if interaction.user.guild_permissions.administrator:
+        return True
+    
+    # Check if user is in the intmsg creator whitelist
+    session = get_session()
+    try:
+        creator = session.query(IntMsgCreator).filter_by(
+            user_id=str(interaction.user.id),
+            server_id=str(interaction.guild_id)
+        ).first()
+        return creator is not None
+    finally:
+        session.close()
 
 async def can_create_tasks(interaction: discord.Interaction) -> bool:
     """Check if a user can create tasks"""
@@ -963,10 +980,11 @@ async def alltasks(interaction: discord.Interaction):
 intmsg_conversations = {}
 
 class IntMsgConversation:
-    def __init__(self, user_id, channel_id, guild_id):
+    def __init__(self, user_id, channel_id, guild_id, target_channel_id):
         self.user_id = user_id
         self.channel_id = channel_id
         self.guild_id = guild_id
+        self.target_channel_id = target_channel_id  # Where final message will be sent
         self.step = 1
         self.data = {
             'title': None,
@@ -978,13 +996,14 @@ class IntMsgConversation:
     def add_button(self, button_data):
         self.data['buttons'].append(button_data)
 
-async def start_intmsg_conversation(interaction):
+async def start_intmsg_conversation(interaction, target_channel):
     """Start the interactive message conversation"""
     user_id = str(interaction.user.id)
     intmsg_conversations[user_id] = IntMsgConversation(
         user_id, 
         str(interaction.channel_id), 
-        str(interaction.guild_id)
+        str(interaction.guild_id),
+        str(target_channel.id)
     )
 
 @client.event
@@ -1063,9 +1082,13 @@ async def handle_intmsg_conversation_step(message, conversation):
                 "Style: primary\n"
                 "Name Format: ticket-{id}\n"
                 "Welcome Message: Welcome! Staff will help you soon.\n"
+                "Questions: What is your issue? | When did this start? | What have you tried?\n"
+                "Ticket Visible To: 123456789012345678, 987654321098765432\n"
                 "```\n"
                 "**Styles:** primary (blue), secondary (gray), success (green), danger (red)\n"
-                "**Name Format:** Use `{id}` for ticket number, `{user}` for username\n\n"
+                "**Name Format:** Use `{id}` for ticket number, `{user}` for username\n"
+                "**Questions:** Separate multiple questions with ` | ` (pipe symbol)\n"
+                "**Visible To:** Role IDs separated by commas (get by right-clicking role → Copy ID)\n\n"
                 "*You can add multiple ticket buttons by separating them with `---`*"
             )
         else:
@@ -1121,7 +1144,9 @@ async def parse_ticket_buttons(message, conversation, content):
                 'emoji': None,
                 'style': 'primary',
                 'name_format': 'ticket-{id}',
-                'welcome_message': None
+                'welcome_message': None,
+                'questions': None,
+                'visible_roles': None
             }
             
             for line in lines:
@@ -1141,6 +1166,10 @@ async def parse_ticket_buttons(message, conversation, content):
                         button_data['name_format'] = value
                     elif key in ['welcome message', 'welcome', 'message']:
                         button_data['welcome_message'] = value
+                    elif key in ['questions', 'question']:
+                        button_data['questions'] = value
+                    elif key in ['ticket visible to', 'visible to', 'roles', 'visible_roles']:
+                        button_data['visible_roles'] = value
             
             conversation.add_button(button_data)
         
@@ -1250,8 +1279,8 @@ async def finalize_intmsg_creation(message, conversation):
             color=color
         )
         
-        # Send the message
-        channel = client.get_channel(int(conversation.channel_id))
+        # Send the message to the target channel
+        channel = client.get_channel(int(conversation.target_channel_id))
         sent_message = await channel.send(embed=embed)
         
         # Update embed with message ID
@@ -1267,7 +1296,7 @@ async def finalize_intmsg_creation(message, conversation):
         try:
             interactive_msg = InteractiveMessage(
                 message_id=str(sent_message.id),
-                channel_id=conversation.channel_id,
+                channel_id=conversation.target_channel_id,
                 server_id=conversation.guild_id,
                 title=conversation.data['title'],
                 description=conversation.data['description'],
@@ -1291,6 +1320,8 @@ async def finalize_intmsg_creation(message, conversation):
                     db_button.ticket_name_format = btn_data['name_format']
                     db_button.ticket_description = btn_data.get('welcome_message')
                     db_button.ticket_id_start = 1
+                    db_button.ticket_questions = btn_data.get('questions')
+                    db_button.ticket_visible_roles = btn_data.get('visible_roles')
                 else:  # role
                     db_button.role_id = btn_data['role_id']
                     db_button.role_action = btn_data['action']
@@ -1310,11 +1341,13 @@ async def finalize_intmsg_creation(message, conversation):
             
             # Success message
             button_count = len(conversation.data['buttons'])
+            target_channel = client.get_channel(int(conversation.target_channel_id))
             await message.reply(
                 f"✅ **Interactive message created successfully!**\n\n"
                 f"📊 **Summary:**\n"
                 f"• Title: {conversation.data['title']}\n"
                 f"• Buttons: {button_count}\n"
+                f"• Sent to: {target_channel.mention}\n"
                 f"• Message ID: {interactive_msg.id}\n\n"
                 f"Use `/editintmsg {interactive_msg.id}` to modify it later!"
             )
@@ -1355,13 +1388,15 @@ async def add_buttons_to_existing_message(message, conversation, button_type):
                 button_type=btn_data['type']
             )
             
-            if btn_data['type'] == 'ticket':
-                db_button.ticket_name_format = btn_data['name_format']
-                db_button.ticket_description = btn_data.get('welcome_message')
-                db_button.ticket_id_start = 1
-            else:  # role
-                db_button.role_id = btn_data['role_id']
-                db_button.role_action = btn_data['action']
+                            if btn_data['type'] == 'ticket':
+                    db_button.ticket_name_format = btn_data['name_format']
+                    db_button.ticket_description = btn_data.get('welcome_message')
+                    db_button.ticket_id_start = 1
+                    db_button.ticket_questions = btn_data.get('questions')
+                    db_button.ticket_visible_roles = btn_data.get('visible_roles')
+                else:  # role
+                    db_button.role_id = btn_data['role_id']
+                    db_button.role_action = btn_data['action']
             
             session.add(db_button)
         
@@ -1436,9 +1471,13 @@ class EditIntMsgView(discord.ui.View):
             "Style: primary\n"
             "Name Format: ticket-{id}\n"
             "Welcome Message: Welcome! Staff will help you soon.\n"
+            "Questions: What is your issue? | When did this start? | What have you tried?\n"
+            "Ticket Visible To: 123456789012345678, 987654321098765432\n"
             "```\n"
             "**Styles:** primary (blue), secondary (gray), success (green), danger (red)\n"
-            "**Name Format:** Use `{id}` for ticket number, `{user}` for username",
+            "**Name Format:** Use `{id}` for ticket number, `{user}` for username\n"
+            "**Questions:** Separate multiple questions with ` | ` (pipe symbol)\n"
+            "**Visible To:** Role IDs separated by commas (get by right-clicking role → Copy ID)",
             ephemeral=True
         )
         # Start edit conversation for this button
@@ -1722,19 +1761,118 @@ class MessageManagementView(discord.ui.View):
     name="intmsg",
     description="Create an interactive message with customizable buttons"
 )
-@checks.has_permissions(manage_messages=True)
+@app_commands.describe(
+    channel="The channel where the interactive message will be sent (optional, defaults to current channel)"
+)
 @log_command
-async def intmsg(interaction: discord.Interaction):
+async def intmsg(interaction: discord.Interaction, channel: discord.TextChannel = None):
     """Create an interactive message with buttons for tickets and roles"""
+    # Check if user can create interactive messages
+    if not await can_create_intmsg(interaction):
+        await interaction.response.send_message(
+            "❌ You don't have permission to create interactive messages!\n\n"
+            "Only administrators or whitelisted users can use this command.\n"
+            "Ask an admin to add you with `/imw add @user`",
+            ephemeral=True
+        )
+        return
+    
+    # Default to current channel if none specified
+    if channel is None:
+        channel = interaction.channel
+    
+    # Check if bot can send messages to the target channel
+    if not channel.permissions_for(interaction.guild.me).send_messages:
+        await interaction.response.send_message(
+            f"❌ I don't have permission to send messages in {channel.mention}!",
+            ephemeral=True
+        )
+        return
+    
     await interaction.response.send_message(
-        "🎨 **Interactive Message Creator Started!**\n\n"
-        "I'll guide you through creating your interactive message. You can cancel anytime by typing `cancel`.\n\n"
+        f"🎨 **Interactive Message Creator Started!**\n\n"
+        f"I'll guide you through creating your interactive message for {channel.mention}. You can cancel anytime by typing `cancel`.\n\n"
         "**Step 1/6:** What should the **title** of your message be?",
         ephemeral=True
     )
     
     # Start the conversation flow
-    await start_intmsg_conversation(interaction)
+    await start_intmsg_conversation(interaction, channel)
+
+@client.tree.command(
+    name="imw",
+    description="Add or remove a user from the interactive message creator whitelist (Admin only)"
+)
+@app_commands.describe(
+    user="The user to add/remove from the interactive message creator whitelist",
+    action="The action to perform: 'add' or 'remove'"
+)
+@checks.has_permissions(administrator=True)
+@log_command
+async def imw(interaction: discord.Interaction, user: discord.Member, action: str):
+    """Manage interactive message creator whitelist"""
+    if action.lower() not in ['add', 'remove']:
+        await interaction.response.send_message(
+            "❌ Invalid action! Use 'add' or 'remove'.",
+            ephemeral=True
+        )
+        return
+    
+    session = get_session()
+    try:
+        existing_creator = session.query(IntMsgCreator).filter_by(
+            user_id=str(user.id),
+            server_id=str(interaction.guild_id)
+        ).first()
+        
+        if action.lower() == 'add':
+            if existing_creator:
+                await interaction.response.send_message(
+                    f"❌ {user.display_name} is already in the interactive message creator whitelist!",
+                    ephemeral=True
+                )
+                return
+            
+            new_creator = IntMsgCreator(
+                user_id=str(user.id),
+                server_id=str(interaction.guild_id),
+                added_by=str(interaction.user.id)
+            )
+            session.add(new_creator)
+            session.commit()
+            
+            await interaction.response.send_message(
+                f"✅ Added {user.display_name} to the interactive message creator whitelist!\n"
+                f"They can now use `/intmsg` to create interactive messages.",
+                ephemeral=True
+            )
+            
+        else:  # remove
+            if not existing_creator:
+                await interaction.response.send_message(
+                    f"❌ {user.display_name} is not in the interactive message creator whitelist!",
+                    ephemeral=True
+                )
+                return
+            
+            session.delete(existing_creator)
+            session.commit()
+            
+            await interaction.response.send_message(
+                f"✅ Removed {user.display_name} from the interactive message creator whitelist!\n"
+                f"They can no longer use `/intmsg` (unless they're an admin).",
+                ephemeral=True
+            )
+            
+    except Exception as e:
+        print(f"Error in imw command: {str(e)}")
+        print(traceback.format_exc())
+        await interaction.response.send_message(
+            f"An error occurred while updating the whitelist: {str(e)}",
+            ephemeral=True
+        )
+    finally:
+        session.close()
 
 @client.tree.command(
     name="editintmsg",
