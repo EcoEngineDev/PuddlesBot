@@ -1388,15 +1388,15 @@ async def add_buttons_to_existing_message(message, conversation, button_type):
                 button_type=btn_data['type']
             )
             
-                            if btn_data['type'] == 'ticket':
-                    db_button.ticket_name_format = btn_data['name_format']
-                    db_button.ticket_description = btn_data.get('welcome_message')
-                    db_button.ticket_id_start = 1
-                    db_button.ticket_questions = btn_data.get('questions')
-                    db_button.ticket_visible_roles = btn_data.get('visible_roles')
-                else:  # role
-                    db_button.role_id = btn_data['role_id']
-                    db_button.role_action = btn_data['action']
+            if btn_data['type'] == 'ticket':
+                db_button.ticket_name_format = btn_data['name_format']
+                db_button.ticket_description = btn_data.get('welcome_message')
+                db_button.ticket_id_start = 1
+                db_button.ticket_questions = btn_data.get('questions')
+                db_button.ticket_visible_roles = btn_data.get('visible_roles')
+            else:  # role
+                db_button.role_id = btn_data['role_id']
+                db_button.role_action = btn_data['action']
             
             session.add(db_button)
         
@@ -1482,7 +1482,12 @@ class EditIntMsgView(discord.ui.View):
         )
         # Start edit conversation for this button
         user_id = str(interaction.user.id)
-        intmsg_conversations[user_id] = IntMsgConversation(user_id, str(interaction.channel_id), str(interaction.guild_id))
+        intmsg_conversations[user_id] = IntMsgConversation(
+            user_id, 
+            str(interaction.channel_id), 
+            str(interaction.guild_id),
+            str(interaction.channel_id)  # Use same channel for both conversation and target
+        )
         intmsg_conversations[user_id].step = 41  # Ticket button step
         intmsg_conversations[user_id].data['message_id'] = self.message_id
     
@@ -1505,7 +1510,12 @@ class EditIntMsgView(discord.ui.View):
         )
         # Start edit conversation for this button  
         user_id = str(interaction.user.id)
-        intmsg_conversations[user_id] = IntMsgConversation(user_id, str(interaction.channel_id), str(interaction.guild_id))
+        intmsg_conversations[user_id] = IntMsgConversation(
+            user_id, 
+            str(interaction.channel_id), 
+            str(interaction.guild_id),
+            str(interaction.channel_id)  # Use same channel for both conversation and target
+        )
         intmsg_conversations[user_id].step = 51  # Role button step
         intmsg_conversations[user_id].data['message_id'] = self.message_id
     
