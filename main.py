@@ -8,9 +8,10 @@ from dateutil import parser
 from database import Task, get_session
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from typing import Optional
+from typing import Optional, Callable, Any
 import traceback
 import sys
+import functools
 
 # Initialize bot with all intents
 class PuddlesBot(discord.Client):
@@ -181,19 +182,19 @@ class TaskView(discord.ui.View):
             
         await interaction.response.edit_message(embed=embed, view=self)
 
-# Error handling decorator
-def handle_errors(func):
-    async def wrapper(*args, **kwargs):
+def log_command(func: Callable) -> Callable:
+    @functools.wraps(func)
+    async def wrapper(interaction: discord.Interaction, *args: Any, **kwargs: Any) -> Any:
         try:
             print(f"Executing command: {func.__name__}")
-            return await func(*args, **kwargs)
+            print(f"Command called by: {interaction.user.name}")
+            print(f"Arguments: {args}")
+            print(f"Keyword arguments: {kwargs}")
+            return await func(interaction, *args, **kwargs)
         except Exception as e:
             print(f"Error in {func.__name__}:")
             print(traceback.format_exc())
-            
-            # Get the interaction object
-            interaction = next((arg for arg in args if isinstance(arg, discord.Interaction)), None)
-            if interaction and not interaction.response.is_done():
+            if not interaction.response.is_done():
                 await interaction.response.send_message(
                     f"An error occurred while processing the command. Error: {str(e)}",
                     ephemeral=True
@@ -210,11 +211,8 @@ def handle_errors(func):
     due_date="Due date in YYYY-MM-DD HH:MM format (24-hour)",
     description="Description of the task"
 )
-@handle_errors
+@log_command
 async def task(interaction: discord.Interaction, name: str, assigned_to: discord.Member, due_date: str, description: str):
-    print(f"Task command called by {interaction.user.name}")
-    print(f"Parameters: name={name}, assigned_to={assigned_to}, due_date={due_date}, description={description}")
-    
     try:
         due_date_dt = parser.parse(due_date)
         print(f"Parsed due date: {due_date_dt}")
@@ -250,7 +248,6 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
                 print("DM sent to assigned user")
             except discord.Forbidden:
                 print("Could not send DM to user - messages blocked")
-                pass
                 
         finally:
             session.close()
@@ -267,9 +264,8 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
     name="mytasks",
     description="View your tasks"
 )
-@handle_errors
+@log_command
 async def mytasks(interaction: discord.Interaction):
-    print(f"Mytasks command called by {interaction.user.name}")
     session = get_session()
     try:
         tasks = session.query(Task).filter_by(
