@@ -241,16 +241,34 @@ class TicketQuestionsModal(discord.ui.Modal):
     def __init__(self, button_data, questions):
         super().__init__(title="Ticket Information", timeout=300)
         self.button_data = button_data
-        self.questions = questions[:5]  # Limit to 5 questions due to Discord modal limits
+        self.questions = []
+        self.question_data = []
+        
+        # Parse questions and example answers
+        raw_questions = questions[:5]  # Limit to 5 questions due to Discord modal limits
+        for question_text in raw_questions:
+            # Parse format: "Question text [Example answer]"
+            if '[' in question_text and ']' in question_text:
+                question_part = question_text.split('[')[0].strip()
+                example_part = question_text.split('[')[1].split(']')[0].strip()
+            else:
+                question_part = question_text.strip()
+                example_part = f"Please answer: {question_part}"
+            
+            self.questions.append(question_part)
+            self.question_data.append({
+                'question': question_part,
+                'example': example_part
+            })
         
         # Add text inputs for each question
-        for i, question in enumerate(self.questions):
+        for i, q_data in enumerate(self.question_data):
             text_input = discord.ui.TextInput(
-                label=question[:45],  # Discord label limit
-                placeholder=f"Please answer: {question}"[:100],  # Placeholder limit
+                label=q_data['question'][:45],  # Discord label limit
+                placeholder=q_data['example'][:100],  # Use example as placeholder
                 required=True,
                 max_length=1000,
-                style=discord.TextStyle.paragraph if len(question) > 50 else discord.TextStyle.short
+                style=discord.TextStyle.paragraph if len(q_data['question']) > 50 else discord.TextStyle.short
             )
             self.add_item(text_input)
     

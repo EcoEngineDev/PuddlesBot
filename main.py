@@ -1082,12 +1082,12 @@ async def handle_intmsg_conversation_step(message, conversation):
                 "Style: primary\n"
                 "Name Format: ticket-{id}\n"
                 "Welcome Message: Welcome! Staff will help you soon.\n"
-                "Questions: What is your issue? | When did this start? | What have you tried?\n"
+                "Questions: What is your issue? [Describe your problem in detail] | When did this start? [Today, yesterday, last week, etc.] | What have you tried? [List the steps you've already taken]\n"
                 "Ticket Visible To: 123456789012345678, 987654321098765432\n"
                 "```\n"
                 "**Styles:** primary (blue), secondary (gray), success (green), danger (red)\n"
                 "**Name Format:** Use `{id}` for ticket number, `{user}` for username\n"
-                "**Questions:** Separate multiple questions with ` | ` (pipe symbol)\n"
+                "**Questions:** Format: `Question text [Example answer]` separated by ` | `\n"
                 "**Visible To:** Role IDs separated by commas (get by right-clicking role → Copy ID)\n\n"
                 "*You can add multiple ticket buttons by separating them with `---`*"
             )
@@ -1528,12 +1528,12 @@ class EditIntMsgView(discord.ui.View):
             "Style: primary\n"
             "Name Format: ticket-{id}\n"
             "Welcome Message: Welcome! Staff will help you soon.\n"
-            "Questions: What is your issue? | When did this start? | What have you tried?\n"
+            "Questions: What is your issue? [Describe your problem in detail] | When did this start? [Today, yesterday, last week, etc.] | What have you tried? [List the steps you've already taken]\n"
             "Ticket Visible To: 123456789012345678, 987654321098765432\n"
             "```\n"
             "**Styles:** primary (blue), secondary (gray), success (green), danger (red)\n"
             "**Name Format:** Use `{id}` for ticket number, `{user}` for username\n"
-            "**Questions:** Separate multiple questions with ` | ` (pipe symbol)\n"
+            "**Questions:** Format: `Question text [Example answer]` separated by ` | `\n"
             "**Visible To:** Role IDs separated by commas (get by right-clicking role → Copy ID)",
             ephemeral=True
         )
