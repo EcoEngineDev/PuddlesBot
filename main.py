@@ -91,96 +91,144 @@ class UserButton(discord.ui.Button):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class TaskView(discord.ui.View):
-    def __init__(self, tasks, show_complete=True, user=None):
-        super().__init__(timeout=180)
+    def __init__(self, tasks, user):
+        super().__init__(timeout=180)  # 3 minute timeout
         self.tasks = tasks
-        self.show_complete = show_complete
-        if user:
-            self.add_item(UserButton(user))
-        self.update_buttons()
+        self.user = user
+        self.selected_task = None
+        
+        # Add task selection dropdown
+        self.add_item(TaskSelect(tasks))
 
-    def update_buttons(self):
-        self.clear_items()
-        
-        # Add a select menu for tasks
-        options = []
-        for i, task in enumerate(self.tasks):
-            due_date = task.due_date.strftime('%Y-%m-%d')
-            options.append(discord.SelectOption(
-                label=f"{task.name} (Due: {due_date})",
-                value=str(i),
-                description=f"Click to view details"
-            ))
-        
-        if options:
-            select_menu = discord.ui.Select(
-                placeholder="Select a task to view details",
-                options=options,
-                custom_id="task_select"
-            )
-            select_menu.callback = self.handle_select
-            self.add_item(select_menu)
-            
-            if self.show_complete:
-                # Add complete buttons for each task
-                for i, task in enumerate(self.tasks):
-                    complete_button = discord.ui.Button(
-                        label=f"Complete: {task.name}",
-                        custom_id=f"complete_{i}",
-                        style=discord.ButtonStyle.success,
-                        row=i+1
-                    )
-                    complete_button.callback = lambda i=i: self.handle_complete(i)
-                    self.add_item(complete_button)
-
-    async def handle_select(self, interaction: discord.Interaction):
-        task_index = int(interaction.data['values'][0])
-        task = self.tasks[task_index]
-        
-        embed = discord.Embed(
-            title=f"Task Details: {task.name}",
-            description=task.description,
-            color=discord.Color.blue()
+class TaskSelect(discord.ui.Select):
+    def __init__(self, tasks):
+        self.task_list = tasks
+        options = [
+            discord.SelectOption(
+                label=task.name[:100],  # Discord has a 100 char limit on labels
+                value=str(task.id),
+                description=f"Due: {task.due_date.strftime('%Y-%m-%d %H:%M')}"[:100]
+            ) for task in tasks
+        ]
+        super().__init__(
+            placeholder="Choose a task to view details...",
+            min_values=1,
+            max_values=1,
+            options=options
         )
-        embed.add_field(name="Due Date", value=task.due_date.strftime('%Y-%m-%d %H:%M UTC'))
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    async def handle_complete(self, task_index: int):
-        task = self.tasks[task_index]
+    async def callback(self, interaction: discord.Interaction):
+        view: TaskView = self.view
         session = get_session()
         try:
-            task_db = session.query(Task).filter_by(id=task.id).first()
-            if task_db:
-                task_db.completed = True
-                session.commit()
-                self.tasks.pop(task_index)
-                
-                if not self.tasks:
-                    await interaction.message.delete()
-                    await interaction.response.send_message("All tasks completed! 🎉")
-                    return
-                    
-                self.update_buttons()
-                await self.update_message(interaction)
+            task_id = int(self.values[0])
+            task = session.query(Task).get(task_id)
+            if not task:
+                await interaction.response.send_message("Task not found!", ephemeral=True)
+                return
+
+            view.selected_task = task
+            
+            # Create embed with task details
+            embed = discord.Embed(
+                title=f"Task: {task.name}",
+                description=task.description,
+                color=discord.Color.blue()
+            )
+            embed.add_field(
+                name="Due Date",
+                value=task.due_date.strftime('%Y-%m-%d %H:%M UTC'),
+                inline=False
+            )
+            embed.add_field(
+                name="Status",
+                value="Pending",
+                inline=False
+            )
+
+            # Update the complete button state
+            complete_button = None
+            for item in view.children:
+                if isinstance(item, CompleteTaskButton):
+                    complete_button = item
+                    complete_button.disabled = False
+                    break
+            
+            if not complete_button:
+                view.add_item(CompleteTaskButton())
+
+            await interaction.response.edit_message(embed=embed, view=view)
+        
+        except Exception as e:
+            print(f"Error in task selection: {str(e)}")
+            print(traceback.format_exc())
+            await interaction.response.send_message(
+                "An error occurred while processing your selection.",
+                ephemeral=True
+            )
         finally:
             session.close()
 
-    async def update_message(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="Tasks",
-            description="Select a task to view details or mark as complete",
-            color=discord.Color.blue()
+class CompleteTaskButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            style=discord.ButtonStyle.success,
+            label="Complete Task",
+            disabled=True  # Disabled by default until a task is selected
         )
-        
-        # Add task summaries to embed
-        for task in self.tasks:
-            embed.add_field(
-                name=task.name,
-                value=f"Due: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}",
-                inline=False
+
+    async def callback(self, interaction: discord.Interaction):
+        view: TaskView = self.view
+        if not view.selected_task:
+            await interaction.response.send_message(
+                "Please select a task first!",
+                ephemeral=True
             )
-            
-        await interaction.response.edit_message(embed=embed, view=self)
+            return
+
+        if interaction.user.id != int(view.selected_task.assigned_to):
+            await interaction.response.send_message(
+                "You can only complete tasks assigned to you!",
+                ephemeral=True
+            )
+            return
+
+        session = get_session()
+        try:
+            task = session.query(Task).get(view.selected_task.id)
+            if task:
+                task.completed = True
+                task.completed_at = datetime.utcnow()
+                session.commit()
+                
+                embed = discord.Embed(
+                    title="✅ Task Completed",
+                    description=f"Task '{task.name}' has been marked as complete!",
+                    color=discord.Color.green()
+                )
+                
+                # Disable the complete button and dropdown
+                self.disabled = True
+                for item in view.children:
+                    if isinstance(item, TaskSelect):
+                        item.disabled = True
+
+                await interaction.response.edit_message(embed=embed, view=view)
+            else:
+                await interaction.response.send_message(
+                    "Task not found! It may have been deleted.",
+                    ephemeral=True
+                )
+        
+        except Exception as e:
+            print(f"Error completing task: {str(e)}")
+            print(traceback.format_exc())
+            await interaction.response.send_message(
+                f"An error occurred while completing the task: {str(e)}",
+                ephemeral=True
+            )
+        finally:
+            session.close()
 
 def log_command(func: Callable) -> Callable:
     @functools.wraps(func)
@@ -272,34 +320,32 @@ async def mytasks(interaction: discord.Interaction):
             assigned_to=str(interaction.user.id),
             completed=False
         ).order_by(Task.due_date).all()
-        print(f"Found {len(tasks)} tasks for user")
         
         if not tasks:
-            await interaction.response.send_message("No pending tasks! 🎉")
-            print("No tasks found response sent")
+            await interaction.response.send_message(
+                "You have no pending tasks! 🎉",
+                ephemeral=True
+            )
             return
             
         embed = discord.Embed(
-            title="Tasks",
-            description="Select a task to view details or mark as complete:",
+            title="Your Tasks",
+            description="Select a task from the dropdown to view details and mark as complete:",
             color=discord.Color.blue()
         )
         
-        for task in tasks:
-            embed.add_field(
-                name=task.name,
-                value=f"Due: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}",
-                inline=False
-            )
-        print("Created tasks embed")
-        
-        view = TaskView(tasks, user=interaction.user)
+        view = TaskView(tasks, interaction.user)
         await interaction.response.send_message(embed=embed, view=view)
-        print("Tasks list response sent")
         
+    except Exception as e:
+        print(f"Error in mytasks command: {str(e)}")
+        print(traceback.format_exc())
+        await interaction.response.send_message(
+            f"An error occurred while fetching your tasks: {str(e)}",
+            ephemeral=True
+        )
     finally:
         session.close()
-        print("Database session closed")
 
 @client.tree.command(
     name="taskedit",
