@@ -5,13 +5,14 @@ import os
 from keep_alive import keep_alive
 from datetime import datetime, timedelta
 from dateutil import parser
-from database import Task, get_session
+from database import Task, TaskCreator, get_session
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from typing import Optional, Callable, Any
 import traceback
 import sys
 import functools
+from discord.app_commands import checks
 
 # Initialize bot with all intents
 class PuddlesBot(discord.Client):
@@ -249,6 +250,72 @@ def log_command(func: Callable) -> Callable:
                 )
     return wrapper
 
+async def can_create_tasks(interaction: discord.Interaction) -> bool:
+    """Check if a user can create tasks"""
+    # Admin override
+    if interaction.user.guild_permissions.administrator:
+        return True
+        
+    # Check whitelist
+    session = get_session()
+    try:
+        creator = session.query(TaskCreator).filter_by(
+            user_id=str(interaction.user.id),
+            server_id=str(interaction.guild_id)
+        ).first()
+        return creator is not None
+    finally:
+        session.close()
+
+@client.tree.command(
+    name="tcw",
+    description="Add a user to the task creator whitelist (Admin only)"
+)
+@app_commands.describe(
+    user="The user to add to the task creator whitelist"
+)
+@checks.has_permissions(administrator=True)
+@log_command
+async def tcw(interaction: discord.Interaction, user: discord.Member):
+    session = get_session()
+    try:
+        # Check if user is already whitelisted
+        existing = session.query(TaskCreator).filter_by(
+            user_id=str(user.id),
+            server_id=str(interaction.guild_id)
+        ).first()
+        
+        if existing:
+            await interaction.response.send_message(
+                f"{user.display_name} is already whitelisted to create tasks.",
+                ephemeral=True
+            )
+            return
+            
+        # Add user to whitelist
+        creator = TaskCreator(
+            user_id=str(user.id),
+            server_id=str(interaction.guild_id),
+            added_by=str(interaction.user.id)
+        )
+        session.add(creator)
+        session.commit()
+        
+        await interaction.response.send_message(
+            f"✅ {user.display_name} has been added to the task creator whitelist.",
+            ephemeral=True
+        )
+        
+    except Exception as e:
+        print(f"Error in tcw command: {str(e)}")
+        print(traceback.format_exc())
+        await interaction.response.send_message(
+            f"An error occurred while adding the user to the whitelist: {str(e)}",
+            ephemeral=True
+        )
+    finally:
+        session.close()
+
 @client.tree.command(
     name="task",
     description="Create a new task"
@@ -261,9 +328,16 @@ def log_command(func: Callable) -> Callable:
 )
 @log_command
 async def task(interaction: discord.Interaction, name: str, assigned_to: discord.Member, due_date: str, description: str):
+    # Check if user can create tasks
+    if not await can_create_tasks(interaction):
+        await interaction.response.send_message(
+            "You don't have permission to create tasks. Please ask an admin to add you to the task creator whitelist.",
+            ephemeral=True
+        )
+        return
+
     try:
         due_date_dt = parser.parse(due_date)
-        print(f"Parsed due date: {due_date_dt}")
         
         session = get_session()
         try:
@@ -272,12 +346,11 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
                 assigned_to=str(assigned_to.id),
                 due_date=due_date_dt,
                 description=description,
-                server_id=str(interaction.guild_id)  # Add server ID
+                server_id=str(interaction.guild_id),
+                created_by=str(interaction.user.id)
             )
-            print("Created new task object")
             session.add(new_task)
             session.commit()
-            print("Task committed to database")
             
             embed = discord.Embed(
                 title="✅ Task Created",
@@ -286,7 +359,6 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
             )
             embed.add_field(name="Due Date", value=due_date_dt.strftime('%Y-%m-%d %H:%M UTC'))
             await interaction.response.send_message(embed=embed)
-            print("Task creation response sent")
             
             try:
                 await assigned_to.send(
@@ -295,16 +367,13 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
                     f"Due: {due_date_dt.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
                     f"Description:\n{description}"
                 )
-                print("DM sent to assigned user")
             except discord.Forbidden:
-                print("Could not send DM to user - messages blocked")
+                pass
                 
         finally:
             session.close()
-            print("Database session closed")
             
     except ValueError as e:
-        print(f"Date parsing error: {e}")
         await interaction.response.send_message(
             "Invalid date format. Please use YYYY-MM-DD HH:MM format.",
             ephemeral=True
@@ -476,96 +545,111 @@ async def oldtasks(interaction: discord.Interaction):
 
 @client.tree.command(
     name="alltasks",
-    description="View all tasks in the server"
+    description="View all active tasks in the server"
 )
+@log_command
 async def alltasks(interaction: discord.Interaction):
     session = get_session()
     try:
-        tasks = session.query(Task).filter_by(completed=False).order_by(Task.due_date).all()
+        tasks = session.query(Task).filter_by(
+            server_id=str(interaction.guild_id),
+            completed=False
+        ).order_by(Task.due_date).all()
         
         if not tasks:
-            await interaction.response.send_message("No pending tasks in the server! 🎉")
+            await interaction.response.send_message(
+                "There are no active tasks in the server!",
+                ephemeral=True
+            )
             return
             
         embed = discord.Embed(
-            title="All Server Tasks",
-            description="Here are all pending tasks:",
+            title="All Active Tasks",
+            description="Here are all active tasks in the server:",
             color=discord.Color.blue()
         )
         
-        # Group tasks by assigned user
-        tasks_by_user = {}
         for task in tasks:
-            user_id = task.assigned_to
-            if user_id not in tasks_by_user:
-                tasks_by_user[user_id] = []
-            tasks_by_user[user_id].append(task)
-        
-        view = discord.ui.View(timeout=180)
-        
-        # Add tasks to embed
-        for user_id, user_tasks in tasks_by_user.items():
             try:
-                user = await client.fetch_user(int(user_id))
-                if not user:
-                    continue
+                assigned_user = await client.fetch_user(int(task.assigned_to))
+                creator_user = await client.fetch_user(int(task.created_by))
+                assigned_name = assigned_user.display_name if assigned_user else "Unknown User"
+                creator_name = creator_user.display_name if creator_user else "Unknown User"
                 
-                # Add user profile button
-                view.add_item(UserButton(user))
-                
-                tasks_text = "\n".join([
-                    f"• {task.name} (Due: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')})"
-                    for task in user_tasks
-                ])
-                
-                embed.add_field(
-                    name=f"Tasks for {user.display_name}",
-                    value=tasks_text,
-                    inline=False
+                due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
+                value = (
+                    f"Assigned to: {assigned_name}\n"
+                    f"Created by: {creator_name}\n"
+                    f"Due: {due_date}\n"
+                    f"Description: {task.description}"
                 )
+                embed.add_field(name=task.name, value=value, inline=False)
             except:
                 continue
         
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed)
         
+    except Exception as e:
+        print(f"Error in alltasks command: {str(e)}")
+        print(traceback.format_exc())
+        await interaction.response.send_message(
+            f"An error occurred while fetching tasks: {str(e)}",
+            ephemeral=True
+        )
     finally:
         session.close()
 
 @client.tree.command(
     name="showtasks",
-    description="View tasks for a specific user"
+    description="View tasks assigned to a specific user"
 )
 @app_commands.describe(
     user="The user whose tasks you want to view"
 )
+@log_command
 async def showtasks(interaction: discord.Interaction, user: discord.Member):
     session = get_session()
     try:
         tasks = session.query(Task).filter_by(
+            server_id=str(interaction.guild_id),
             assigned_to=str(user.id),
             completed=False
         ).order_by(Task.due_date).all()
         
         if not tasks:
-            await interaction.response.send_message(f"No pending tasks! 🎉")
+            await interaction.response.send_message(
+                f"{user.display_name} has no active tasks!",
+                ephemeral=True
+            )
             return
             
         embed = discord.Embed(
-            title=f"Tasks",
-            description="Here are the pending tasks:",
+            title=f"Tasks for {user.display_name}",
+            description=f"Here are the active tasks assigned to {user.display_name}:",
             color=discord.Color.blue()
         )
         
         for task in tasks:
-            embed.add_field(
-                name=task.name,
-                value=f"Due: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\nDescription: {task.description}",
-                inline=False
+            creator_user = await client.fetch_user(int(task.created_by))
+            creator_name = creator_user.display_name if creator_user else "Unknown User"
+            
+            due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
+            value = (
+                f"Created by: {creator_name}\n"
+                f"Due: {due_date}\n"
+                f"Description: {task.description}"
             )
+            embed.add_field(name=task.name, value=value, inline=False)
         
-        view = TaskView(tasks, show_complete=False, user=user)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed)
         
+    except Exception as e:
+        print(f"Error in showtasks command: {str(e)}")
+        print(traceback.format_exc())
+        await interaction.response.send_message(
+            f"An error occurred while fetching tasks: {str(e)}",
+            ephemeral=True
+        )
     finally:
         session.close()
 

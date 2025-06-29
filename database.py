@@ -3,6 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
+import sqlalchemy
 
 # Get the absolute path to the data directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -26,9 +27,27 @@ class Task(Base):
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     server_id = Column(String, nullable=False)  # Discord server ID
+    created_by = Column(String, nullable=False)  # Discord user ID of task creator
 
     def __repr__(self):
         return f"<Task(name='{self.name}', assigned_to='{self.assigned_to}', due_date='{self.due_date}')>"
+
+class TaskCreator(Base):
+    __tablename__ = 'task_creators'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False)  # Discord user ID
+    server_id = Column(String, nullable=False)  # Discord server ID
+    added_by = Column(String, nullable=False)  # Discord user ID who added them
+    added_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<TaskCreator(user_id='{self.user_id}', server_id='{self.server_id}')>"
+
+    # Add unique constraint to prevent duplicate entries
+    __table_args__ = (
+        sqlalchemy.UniqueConstraint('user_id', 'server_id', name='unique_user_server'),
+    )
 
 # Create database engine with absolute path
 engine = create_engine(f'sqlite:///{DB_FILE}', echo=True)
