@@ -20,15 +20,22 @@ class PuddlesBot(discord.Client):
         self.scheduler = AsyncIOScheduler()
         
     async def setup_hook(self):
+        # This is called when the bot starts
+        print("Syncing commands...")
+        # Sync commands with Discord
         await self.tree.sync()
+        print("Commands synced!")
+        
         self.scheduler.start()
-        # Schedule task reminder check every hour
         self.scheduler.add_job(self.check_due_tasks, 'interval', hours=1)
+
+    async def on_ready(self):
+        print(f'Logged in as {self.user} (ID: {self.user.id})')
+        print('------')
 
     async def check_due_tasks(self):
         session = get_session()
         try:
-            # Get tasks due in the next 3 days that haven't been notified
             three_days_from_now = datetime.utcnow() + timedelta(days=3)
             tasks = session.query(Task).filter(
                 Task.due_date <= three_days_from_now,
@@ -47,7 +54,7 @@ class PuddlesBot(discord.Client):
                     try:
                         await user.send(embed=embed)
                     except discord.Forbidden:
-                        pass  # User has DMs disabled
+                        pass
         finally:
             session.close()
 
@@ -58,17 +65,24 @@ class TaskView(discord.ui.View):
         super().__init__(timeout=180)
         self.tasks = tasks
         self.current_page = 0
-        
-        # Add task navigation buttons
         self.update_buttons()
-        
+
     def update_buttons(self):
         self.clear_items()
         if len(self.tasks) > 1:
-            self.add_item(discord.ui.Button(label="Previous", custom_id="prev", disabled=self.current_page == 0))
-            self.add_item(discord.ui.Button(label="Next", custom_id="next", disabled=self.current_page == len(self.tasks) - 1))
-        self.add_item(discord.ui.Button(label="View Details", custom_id="details", style=discord.ButtonStyle.primary))
-        self.add_item(discord.ui.Button(label="Complete", custom_id="complete", style=discord.ButtonStyle.success))
+            prev_button = discord.ui.Button(label="Previous", custom_id="prev", style=discord.ButtonStyle.secondary, disabled=self.current_page == 0)
+            next_button = discord.ui.Button(label="Next", custom_id="next", style=discord.ButtonStyle.secondary, disabled=self.current_page == len(self.tasks) - 1)
+            self.add_item(prev_button)
+            self.add_item(next_button)
+            prev_button.callback = lambda i: self.handle_button(i, "prev")
+            next_button.callback = lambda i: self.handle_button(i, "next")
+
+        details_button = discord.ui.Button(label="View Details", custom_id="details", style=discord.ButtonStyle.primary)
+        complete_button = discord.ui.Button(label="Complete", custom_id="complete", style=discord.ButtonStyle.success)
+        self.add_item(details_button)
+        self.add_item(complete_button)
+        details_button.callback = lambda i: self.handle_button(i, "details")
+        complete_button.callback = lambda i: self.handle_button(i, "complete")
 
     async def handle_button(self, interaction: discord.Interaction, button_id: str):
         if button_id == "prev" and self.current_page > 0:
@@ -96,12 +110,13 @@ class TaskView(discord.ui.View):
                     self.tasks.pop(self.current_page)
                     if not self.tasks:
                         await interaction.message.delete()
+                        await interaction.response.send_message("All tasks completed! 🎉", ephemeral=True)
                         return
                     if self.current_page >= len(self.tasks):
                         self.current_page = len(self.tasks) - 1
             finally:
                 session.close()
-        
+
         self.update_buttons()
         await self.update_message(interaction)
 
@@ -124,10 +139,8 @@ class TaskView(discord.ui.View):
 )
 async def task(interaction: discord.Interaction, name: str, assigned_to: discord.Member, due_date: str, description: str):
     try:
-        # Parse the due date
         due_date_dt = parser.parse(due_date)
         
-        # Create new task
         session = get_session()
         try:
             new_task = Task(
@@ -147,11 +160,10 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
             embed.add_field(name="Due Date", value=due_date_dt.strftime('%Y-%m-%d %H:%M UTC'))
             await interaction.response.send_message(embed=embed)
             
-            # Send DM to assigned user
             try:
                 await assigned_to.send(f"You have been assigned a new task: **{name}**\nDue: {due_date_dt.strftime('%Y-%m-%d %H:%M UTC')}\n\nDescription:\n{description}")
             except discord.Forbidden:
-                pass  # User has DMs disabled
+                pass
                 
         finally:
             session.close()
@@ -172,7 +184,6 @@ async def mytasks(interaction: discord.Interaction):
             await interaction.response.send_message("You have no pending tasks! 🎉", ephemeral=True)
             return
             
-        # Create initial embed with first task
         embed = discord.Embed(
             title="Your Tasks",
             description=f"Task: {tasks[0].name}\nDue: {tasks[0].due_date.strftime('%Y-%m-%d %H:%M UTC')}",
@@ -202,7 +213,6 @@ async def taskedit(
     new_due_date: Optional[str] = None,
     new_description: Optional[str] = None
 ):
-    # Check if user has admin permissions
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("You need administrator permissions to edit tasks.", ephemeral=True)
         return
@@ -236,19 +246,17 @@ async def taskedit(
         )
         await interaction.response.send_message(embed=embed)
         
-        # Notify new assignee if changed
         if new_assigned_to:
             try:
                 await new_assigned_to.send(f"You have been assigned to the task: **{task.name}**\nDue: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\n\nDescription:\n{task.description}")
             except discord.Forbidden:
-                pass  # User has DMs disabled
+                pass
                 
     finally:
         session.close()
 
 @client.tree.command(name="quack", description="Get a random duck image!")
 async def quack(interaction: discord.Interaction):
-    # Using the Random Duck API
     response = requests.get('https://random-d.uk/api/v2/random')
     if response.status_code == 200:
         duck_data = response.json()

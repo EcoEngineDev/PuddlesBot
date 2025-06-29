@@ -1,10 +1,45 @@
-run = "pip install -r requirements.txt && python main.py"
-language = "python"
-entrypoint = "main.py"
+
+run = "python main.py"
+modules = ["python-3.11"]
 
 [nix]
-channel = "stable-22_11"
+channel = "stable-23_11"
 
 [deployment]
-run = ["python3", "main.py"]
-deploymentTarget = "cloudrun" 
+run = ["sh", "-c", "python main.py"]
+
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[packager]
+language = "python3"
+ignoredPackages = ["unit_tests"]
+
+[packager.features]
+enabledForHosting = false
+packageSearch = true
+guessImports = true
+
+[languages.python3]
+pattern = "**/*.py"
+syntax = "python"
+
+[languages.python3.languageServer]
+start = ["pylsp"]
+
+[workflows]
+runButton = "Run Bot"
+
+[[workflows.workflow]]
+name = "Run Bot"
+author = 44383746
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pip install -r requirements.txt"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
