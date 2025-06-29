@@ -1,4 +1,4 @@
-run = "python main.py"
+run = "pip install -r requirements.txt && python main.py"
 language = "python"
 entrypoint = "main.py"
 
