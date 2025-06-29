@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "puddles-bot"
+version = "0.1.0"
+description = "A Discord bot with task management features"
+authors = ["Your Name"]
+
+[tool.poetry.dependencies]
+python = ">=3.8.0,<3.9"
+discord = "^2.3.2"
+flask = "^3.0.2"
+requests = "^2.31.0"
+sqlalchemy = "^2.0.27"
+python-dateutil = "^2.8.2"
+apscheduler = "^3.10.4"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api" 
