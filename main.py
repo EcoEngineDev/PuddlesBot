@@ -291,11 +291,11 @@ async def can_create_tasks(interaction: discord.Interaction) -> bool:
 )
 @app_commands.describe(
     user="The user to add/remove from the task creator whitelist",
-    action="Whether to add or remove the user (default: add)"
+    action="The action to perform: 'add' or 'remove'"
 )
 @checks.has_permissions(administrator=True)
 @log_command
-async def tcw(interaction: discord.Interaction, user: discord.Member, action: str = "add"):
+async def tcw(interaction: discord.Interaction, user: discord.Member, action: str):
     if action.lower() not in ["add", "remove"]:
         await interaction.response.send_message(
             "Invalid action. Please use 'add' or 'remove'.",
@@ -561,10 +561,10 @@ class TaskEditView(discord.ui.View):
         self.add_item(TaskEditSelect(tasks))
         
         # Add edit buttons (disabled by default)
-        self.add_item(discord.ui.Button(label="Edit Name", custom_id="edit_name", style=discord.ButtonStyle.primary, disabled=True))
-        self.add_item(discord.ui.Button(label="Edit Due Date", custom_id="edit_due_date", style=discord.ButtonStyle.primary, disabled=True))
-        self.add_item(discord.ui.Button(label="Edit Description", custom_id="edit_description", style=discord.ButtonStyle.primary, disabled=True))
-        self.add_item(discord.ui.Button(label="Change Assignee", custom_id="edit_assignee", style=discord.ButtonStyle.primary, disabled=True))
+        self.add_item(discord.ui.Button(label="Edit Name", custom_id="edit_name_btn", style=discord.ButtonStyle.primary, disabled=True))
+        self.add_item(discord.ui.Button(label="Edit Due Date", custom_id="edit_due_date_btn", style=discord.ButtonStyle.primary, disabled=True))
+        self.add_item(discord.ui.Button(label="Edit Description", custom_id="edit_desc_btn", style=discord.ButtonStyle.primary, disabled=True))
+        self.add_item(discord.ui.Button(label="Change Assignee", custom_id="edit_assignee_btn", style=discord.ButtonStyle.primary, disabled=True))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not self.selected_task:
@@ -583,22 +583,22 @@ class TaskEditView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Edit Name", custom_id="edit_name", style=discord.ButtonStyle.primary, disabled=True)
+    @discord.ui.button(label="Edit Name", custom_id="edit_name_btn", style=discord.ButtonStyle.primary, disabled=True)
     async def edit_name(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = TaskEditModal(self.selected_task, "name")
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Edit Due Date", custom_id="edit_due_date", style=discord.ButtonStyle.primary, disabled=True)
+    @discord.ui.button(label="Edit Due Date", custom_id="edit_due_date_btn", style=discord.ButtonStyle.primary, disabled=True)
     async def edit_due_date(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = TaskEditModal(self.selected_task, "due_date")
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Edit Description", custom_id="edit_description", style=discord.ButtonStyle.primary, disabled=True)
+    @discord.ui.button(label="Edit Description", custom_id="edit_desc_btn", style=discord.ButtonStyle.primary, disabled=True)
     async def edit_description(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = TaskEditModal(self.selected_task, "description")
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Change Assignee", custom_id="edit_assignee", style=discord.ButtonStyle.primary, disabled=True)
+    @discord.ui.button(label="Change Assignee", custom_id="edit_assignee_btn", style=discord.ButtonStyle.primary, disabled=True)
     async def edit_assignee(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = TaskEditModal(self.selected_task, "assignee")
         await interaction.response.send_modal(modal)
@@ -803,6 +803,95 @@ async def showtasks(interaction: discord.Interaction, user: discord.Member):
         
     except Exception as e:
         print(f"Error in showtasks command: {str(e)}")
+        print(traceback.format_exc())
+        await interaction.response.send_message(
+            f"An error occurred while fetching tasks: {str(e)}",
+            ephemeral=True
+        )
+    finally:
+        session.close()
+
+@client.tree.command(
+    name="quack",
+    description="Get a random duck image! 🦆"
+)
+@log_command
+async def quack(interaction: discord.Interaction):
+    try:
+        # Get a random duck image from random-d.uk API
+        response = requests.get('https://random-d.uk/api/v2/random')
+        if response.status_code == 200:
+            data = response.json()
+            embed = discord.Embed(
+                title="Quack! 🦆",
+                color=discord.Color.yellow()
+            )
+            embed.set_image(url=data['url'])
+            embed.set_footer(text="Powered by random-d.uk")
+            await interaction.response.send_message(embed=embed)
+        else:
+            await interaction.response.send_message(
+                "Sorry, I couldn't fetch a duck image right now. Try again later!",
+                ephemeral=True
+            )
+    except Exception as e:
+        print(f"Error in quack command: {str(e)}")
+        print(traceback.format_exc())
+        await interaction.response.send_message(
+            "An error occurred while fetching the duck image. Please try again later.",
+            ephemeral=True
+        )
+
+@client.tree.command(
+    name="alltasks",
+    description="View all active tasks in the server (Admin only)"
+)
+@checks.has_permissions(administrator=True)
+@log_command
+async def alltasks(interaction: discord.Interaction):
+    session = get_session()
+    try:
+        tasks = session.query(Task).filter_by(
+            server_id=str(interaction.guild_id),
+            completed=False
+        ).order_by(Task.due_date).all()
+        
+        if not tasks:
+            await interaction.response.send_message(
+                "There are no active tasks in this server!",
+                ephemeral=True
+            )
+            return
+            
+        embed = discord.Embed(
+            title="All Active Tasks",
+            description="Here are all active tasks in the server:",
+            color=discord.Color.blue()
+        )
+        
+        for task in tasks:
+            try:
+                assigned_to = await client.fetch_user(int(task.assigned_to))
+                assigned_name = assigned_to.display_name if assigned_to else "Unknown"
+                creator = await client.fetch_user(int(task.created_by)) if task.created_by != "0" else None
+                creator_name = creator.display_name if creator else "Unknown"
+            except:
+                assigned_name = "Unknown"
+                creator_name = "Unknown"
+            
+            due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
+            value = (
+                f"Assigned to: {assigned_name}\n"
+                f"Created by: {creator_name}\n"
+                f"Due: {due_date}\n"
+                f"Description: {task.description}"
+            )
+            embed.add_field(name=task.name, value=value, inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+        
+    except Exception as e:
+        print(f"Error in alltasks command: {str(e)}")
         print(traceback.format_exc())
         await interaction.response.send_message(
             f"An error occurred while fetching tasks: {str(e)}",
