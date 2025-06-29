@@ -14,11 +14,17 @@ class Task(Base):
     due_date = Column(DateTime, nullable=False)
     description = Column(String)
     completed = Column(Boolean, default=False)
-    completed_at = Column(DateTime, nullable=True)  # When the task was completed
+    completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Task(name='{self.name}', assigned_to='{self.assigned_to}', due_date='{self.due_date}')>"
     
-# Create database engine
-engine = create_engine('sqlite:///tasks.db')
+# Create database engine - use absolute path to avoid any path issues
+engine = create_engine('sqlite:///tasks.db', echo=True)
+
+# Drop all tables and recreate them
+Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
 
 # Create session factory
