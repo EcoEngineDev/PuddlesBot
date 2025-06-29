@@ -999,16 +999,27 @@ class MessageSetupModal(discord.ui.Modal):
                 except ValueError:
                     pass
             
+            # Build description with message ID
+            description_text = self.description_input.value if self.description_input.value else ""
+            
             embed = discord.Embed(
                 title=self.title_input.value,
-                description=self.description_input.value if self.description_input.value else None,
+                description=description_text,
                 color=color
             )
-            embed.set_footer(text="Use the buttons below to interact!")
             
-            # Send the message
+            # Send the message first to get the message ID
             message = await interaction.response.send_message(embed=embed, view=None)
             message = await interaction.original_response()
+            
+            # Update the embed with the message ID at the bottom
+            if description_text:
+                updated_description = f"{description_text}\n\n-# Message ID: {message.id}"
+            else:
+                updated_description = f"-# Message ID: {message.id}"
+            
+            embed.description = updated_description
+            await message.edit(embed=embed)
             
             # Save to database
             interactive_msg = InteractiveMessage(
@@ -1073,14 +1084,21 @@ class MessageManagementView(discord.ui.View):
                 await interaction.response.send_message("❌ Could not find the original message!", ephemeral=True)
                 return
             
-            # Create new embed
+            # Create new embed with message ID
             color = discord.Color(int(interactive_msg.color, 16))
+            
+            # Build description with message ID
+            description_text = interactive_msg.description if interactive_msg.description else ""
+            if description_text:
+                updated_description = f"{description_text}\n\n-# Message ID: {interactive_msg.message_id}"
+            else:
+                updated_description = f"-# Message ID: {interactive_msg.message_id}"
+            
             embed = discord.Embed(
                 title=interactive_msg.title,
-                description=interactive_msg.description,
+                description=updated_description,
                 color=color
             )
-            embed.set_footer(text="Use the buttons below to interact!")
             
             # Create view with buttons
             if interactive_msg.buttons:
@@ -1117,11 +1135,18 @@ async def intmsg(interaction: discord.Interaction):
 )
 @checks.has_permissions(manage_messages=True)
 @log_command
-async def addbutton(interaction: discord.Interaction, message_id: int):
+async def addbutton(interaction: discord.Interaction, message_id: str):
     """Add buttons to an interactive message"""
     session = get_session()
     try:
-        interactive_msg = session.query(InteractiveMessage).get(message_id)
+        # Try to convert message_id to int for database lookup
+        try:
+            db_message_id = int(message_id)
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid message ID format!", ephemeral=True)
+            return
+        
+        interactive_msg = session.query(InteractiveMessage).get(db_message_id)
         if not interactive_msg:
             await interaction.response.send_message("❌ Interactive message not found!", ephemeral=True)
             return
@@ -1130,7 +1155,7 @@ async def addbutton(interaction: discord.Interaction, message_id: int):
             await interaction.response.send_message("❌ That message doesn't belong to this server!", ephemeral=True)
             return
         
-        view = MessageManagementView(message_id)
+        view = MessageManagementView(db_message_id)
         await interaction.response.send_message(
             f"**Managing Interactive Message:** {interactive_msg.title}\n\n"
             "Choose what type of button you want to add:",
