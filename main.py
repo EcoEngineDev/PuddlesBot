@@ -13,6 +13,7 @@ import traceback
 import sys
 import functools
 from discord.app_commands import checks
+import sqlalchemy
 
 # Initialize bot with all intents
 class PuddlesBot(discord.Client):
@@ -451,186 +452,264 @@ async def mytasks(interaction: discord.Interaction):
         if session:
             session.close()
 
-@client.tree.command(
-    name="taskedit",
-    description="Edit a task (Admin only)"
-)
-@app_commands.describe(
-    task_name="Name of the task to edit",
-    new_name="New name for the task (optional)",
-    new_assigned_to="New user to assign the task to (optional)",
-    new_due_date="New due date in YYYY-MM-DD HH:MM format (optional)",
-    new_description="New description for the task (optional)"
-)
-async def taskedit(
-    interaction: discord.Interaction,
-    task_name: str,
-    new_name: Optional[str] = None,
-    new_assigned_to: Optional[discord.Member] = None,
-    new_due_date: Optional[str] = None,
-    new_description: Optional[str] = None
-):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("You need administrator permissions to edit tasks.", ephemeral=True)
-        return
-        
-    session = get_session()
-    try:
-        task = session.query(Task).filter_by(name=task_name).first()
-        if not task:
-            await interaction.response.send_message(f"Task '{task_name}' not found.", ephemeral=True)
-            return
-            
-        if new_name:
-            task.name = new_name
-        if new_assigned_to:
-            task.assigned_to = str(new_assigned_to.id)
-        if new_due_date:
-            try:
-                task.due_date = parser.parse(new_due_date)
-            except ValueError:
-                await interaction.response.send_message("Invalid date format. Please use YYYY-MM-DD HH:MM format.", ephemeral=True)
-                return
-        if new_description:
-            task.description = new_description
-            
-        session.commit()
-        
-        embed = discord.Embed(
-            title="✅ Task Updated",
-            description=f"Task '{task_name}' has been updated",
-            color=discord.Color.green()
+class TaskEditSelect(discord.ui.Select):
+    def __init__(self, tasks):
+        self.task_list = tasks
+        options = [
+            discord.SelectOption(
+                label=task.name[:100],
+                value=str(task.id),
+                description=f"Due: {task.due_date.strftime('%Y-%m-%d %H:%M')}"[:100]
+            ) for task in tasks
+        ]
+        super().__init__(
+            placeholder="Choose a task to edit...",
+            min_values=1,
+            max_values=1,
+            options=options
         )
-        await interaction.response.send_message(embed=embed)
-        
-        if new_assigned_to:
-            try:
-                await new_assigned_to.send(f"You have been assigned to the task: **{task.name}**\nDue: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\n\nDescription:\n{task.description}")
-            except discord.Forbidden:
-                pass
-                
-    finally:
-        session.close()
 
-@client.tree.command(
-    name="quack",
-    description="Get a random duck image!"
-)
-async def quack(interaction: discord.Interaction):
-    response = requests.get('https://random-d.uk/api/v2/random')
-    if response.status_code == 200:
-        duck_data = response.json()
-        embed = discord.Embed(title="Quack! 🦆", color=discord.Color.yellow())
-        embed.set_image(url=duck_data['url'])
-        await interaction.response.send_message(embed=embed)
-    else:
-        await interaction.response.send_message("Sorry, couldn't fetch a duck right now! 😢")
+    async def callback(self, interaction: discord.Interaction):
+        view: TaskEditView = self.view
+        session = get_session()
+        try:
+            task_id = int(self.values[0])
+            task = session.query(Task).get(task_id)
+            if not task:
+                await interaction.response.send_message("Task not found!", ephemeral=True)
+                return
 
-@client.tree.command(
-    name="oldtasks",
-    description="View completed tasks"
-)
-@log_command
-async def oldtasks(interaction: discord.Interaction):
-    session = get_session()
-    try:
-        tasks = session.query(Task).filter_by(
-            assigned_to=str(interaction.user.id),
-            server_id=str(interaction.guild_id),
-            completed=True
-        ).order_by(Task.completed_at.desc()).all()
+            view.selected_task = task
+            
+            # Create embed with task details
+            embed = discord.Embed(
+                title=f"Edit Task: {task.name}",
+                description="Select what you want to edit:",
+                color=discord.Color.blue()
+            )
+            embed.add_field(
+                name="Current Details",
+                value=(
+                    f"Name: {task.name}\n"
+                    f"Due Date: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\n"
+                    f"Description: {task.description}"
+                ),
+                inline=False
+            )
+
+            # Enable the edit buttons
+            for item in view.children:
+                if isinstance(item, discord.ui.Button):
+                    item.disabled = False
+
+            await interaction.response.edit_message(embed=embed, view=view)
         
-        if not tasks:
+        except Exception as e:
+            print(f"Error in task selection: {str(e)}")
+            print(traceback.format_exc())
             await interaction.response.send_message(
-                "You have no completed tasks!",
+                "An error occurred while processing your selection.",
                 ephemeral=True
             )
-            return
-            
-        embed = discord.Embed(
-            title="Your Completed Tasks",
-            description="Here are your completed tasks:",
-            color=discord.Color.green()
-        )
+        finally:
+            session.close()
+
+class TaskEditView(discord.ui.View):
+    def __init__(self, tasks, user):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.tasks = tasks
+        self.user = user
+        self.selected_task = None
         
-        for task in tasks:
-            completed_time = task.completed_at.strftime('%Y-%m-%d %H:%M UTC') if task.completed_at else "Unknown"
-            due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
-            
-            try:
-                creator = await client.fetch_user(int(task.created_by)) if task.created_by != "0" else None
-                creator_name = creator.display_name if creator else "Unknown"
-            except:
-                creator_name = "Unknown"
-            
-            value = (
-                f"Due Date: {due_date}\n"
-                f"Completed: {completed_time}\n"
-                f"Created by: {creator_name}\n"
-                f"Description: {task.description}"
+        # Add task selection dropdown
+        self.add_item(TaskEditSelect(tasks))
+        
+        # Add edit buttons (disabled by default)
+        self.add_item(discord.ui.Button(label="Edit Name", custom_id="edit_name", style=discord.ButtonStyle.primary, disabled=True))
+        self.add_item(discord.ui.Button(label="Edit Due Date", custom_id="edit_due_date", style=discord.ButtonStyle.primary, disabled=True))
+        self.add_item(discord.ui.Button(label="Edit Description", custom_id="edit_description", style=discord.ButtonStyle.primary, disabled=True))
+        self.add_item(discord.ui.Button(label="Change Assignee", custom_id="edit_assignee", style=discord.ButtonStyle.primary, disabled=True))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not self.selected_task:
+            return True
+        
+        # Check if user has permission to edit
+        is_admin = interaction.user.guild_permissions.administrator
+        is_creator = str(interaction.user.id) == self.selected_task.created_by
+        is_assigned = str(interaction.user.id) == self.selected_task.assigned_to
+        
+        if not (is_admin or is_creator or is_assigned):
+            await interaction.response.send_message(
+                "You don't have permission to edit this task. Only administrators, task creators, and assigned users can edit tasks.",
+                ephemeral=True
             )
-            embed.add_field(name=task.name, value=value, inline=False)
+            return False
+        return True
+
+    @discord.ui.button(label="Edit Name", custom_id="edit_name", style=discord.ButtonStyle.primary, disabled=True)
+    async def edit_name(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = TaskEditModal(self.selected_task, "name")
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Edit Due Date", custom_id="edit_due_date", style=discord.ButtonStyle.primary, disabled=True)
+    async def edit_due_date(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = TaskEditModal(self.selected_task, "due_date")
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Edit Description", custom_id="edit_description", style=discord.ButtonStyle.primary, disabled=True)
+    async def edit_description(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = TaskEditModal(self.selected_task, "description")
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Change Assignee", custom_id="edit_assignee", style=discord.ButtonStyle.primary, disabled=True)
+    async def edit_assignee(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = TaskEditModal(self.selected_task, "assignee")
+        await interaction.response.send_modal(modal)
+
+class TaskEditModal(discord.ui.Modal):
+    def __init__(self, task: Task, field: str):
+        self.task = task
+        self.field = field
         
-        await interaction.response.send_message(embed=embed)
+        if field == "name":
+            super().__init__(title="Edit Task Name")
+            self.input = discord.ui.TextInput(
+                label="New Task Name",
+                placeholder="Enter the new task name...",
+                default=task.name,
+                required=True,
+                max_length=100
+            )
+        elif field == "due_date":
+            super().__init__(title="Edit Due Date")
+            self.input = discord.ui.TextInput(
+                label="New Due Date (YYYY-MM-DD HH:MM)",
+                placeholder="Example: 2024-12-31 15:30",
+                default=task.due_date.strftime("%Y-%m-%d %H:%M"),
+                required=True
+            )
+        elif field == "description":
+            super().__init__(title="Edit Description")
+            self.input = discord.ui.TextInput(
+                label="New Description",
+                placeholder="Enter the new task description...",
+                default=task.description,
+                required=True,
+                style=discord.TextStyle.paragraph
+            )
+        elif field == "assignee":
+            super().__init__(title="Change Assignee")
+            self.input = discord.ui.TextInput(
+                label="New Assignee (User ID or @mention)",
+                placeholder="Enter user ID or @mention...",
+                required=True
+            )
         
-    except Exception as e:
-        print(f"Error in oldtasks command: {str(e)}")
-        print(traceback.format_exc())
-        await interaction.response.send_message(
-            f"An error occurred while fetching your completed tasks: {str(e)}",
-            ephemeral=True
-        )
-    finally:
-        session.close()
+        self.add_item(self.input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        session = get_session()
+        try:
+            task = session.query(Task).get(self.task.id)
+            if not task:
+                await interaction.response.send_message("Task not found!", ephemeral=True)
+                return
+
+            if self.field == "name":
+                task.name = self.input.value
+            elif self.field == "due_date":
+                try:
+                    task.due_date = parser.parse(self.input.value)
+                except ValueError:
+                    await interaction.response.send_message(
+                        "Invalid date format. Please use YYYY-MM-DD HH:MM format.",
+                        ephemeral=True
+                    )
+                    return
+            elif self.field == "description":
+                task.description = self.input.value
+            elif self.field == "assignee":
+                # Handle both user ID and @mention formats
+                user_input = self.input.value.strip()
+                if user_input.startswith('<@') and user_input.endswith('>'):
+                    user_id = user_input[2:-1]
+                    if user_id.startswith('!'):
+                        user_id = user_id[1:]
+                else:
+                    user_id = user_input
+
+                try:
+                    user = await interaction.client.fetch_user(int(user_id))
+                    task.assigned_to = str(user.id)
+                except:
+                    await interaction.response.send_message(
+                        "Invalid user. Please provide a valid user ID or @mention.",
+                        ephemeral=True
+                    )
+                    return
+
+            session.commit()
+            
+            embed = discord.Embed(
+                title="✅ Task Updated",
+                description=f"Task '{task.name}' has been updated.",
+                color=discord.Color.green()
+            )
+            embed.add_field(
+                name="Updated Field",
+                value=f"The {self.field} has been updated successfully.",
+                inline=False
+            )
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            print(f"Error updating task: {str(e)}")
+            print(traceback.format_exc())
+            await interaction.response.send_message(
+                f"An error occurred while updating the task: {str(e)}",
+                ephemeral=True
+            )
+        finally:
+            session.close()
 
 @client.tree.command(
-    name="alltasks",
-    description="View all active tasks in the server"
+    name="taskedit",
+    description="Edit an existing task"
 )
 @log_command
-async def alltasks(interaction: discord.Interaction):
+async def taskedit(interaction: discord.Interaction):
     session = get_session()
     try:
-        tasks = session.query(Task).filter_by(
-            server_id=str(interaction.guild_id),
-            completed=False
+        # Get tasks that the user can edit (created by them or assigned to them)
+        tasks = session.query(Task).filter(
+            sqlalchemy.or_(
+                Task.created_by == str(interaction.user.id),
+                Task.assigned_to == str(interaction.user.id)
+            ),
+            Task.server_id == str(interaction.guild_id),
+            Task.completed == False
         ).order_by(Task.due_date).all()
         
         if not tasks:
             await interaction.response.send_message(
-                "There are no active tasks in the server!",
+                "You have no tasks that you can edit!",
                 ephemeral=True
             )
             return
             
         embed = discord.Embed(
-            title="All Active Tasks",
-            description="Here are all active tasks in the server:",
+            title="Edit Task",
+            description="Select a task to edit:",
             color=discord.Color.blue()
         )
         
-        for task in tasks:
-            try:
-                assigned_user = await client.fetch_user(int(task.assigned_to))
-                creator_user = await client.fetch_user(int(task.created_by))
-                assigned_name = assigned_user.display_name if assigned_user else "Unknown User"
-                creator_name = creator_user.display_name if creator_user else "Unknown User"
-                
-                due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
-                value = (
-                    f"Assigned to: {assigned_name}\n"
-                    f"Created by: {creator_name}\n"
-                    f"Due: {due_date}\n"
-                    f"Description: {task.description}"
-                )
-                embed.add_field(name=task.name, value=value, inline=False)
-            except:
-                continue
-        
-        await interaction.response.send_message(embed=embed)
+        view = TaskEditView(tasks, interaction.user)
+        await interaction.response.send_message(embed=embed, view=view)
         
     except Exception as e:
-        print(f"Error in alltasks command: {str(e)}")
+        print(f"Error in taskedit command: {str(e)}")
         print(traceback.format_exc())
         await interaction.response.send_message(
             f"An error occurred while fetching tasks: {str(e)}",
@@ -670,8 +749,11 @@ async def showtasks(interaction: discord.Interaction, user: discord.Member):
         )
         
         for task in tasks:
-            creator_user = await client.fetch_user(int(task.created_by))
-            creator_name = creator_user.display_name if creator_user else "Unknown User"
+            try:
+                creator = await client.fetch_user(int(task.created_by)) if task.created_by != "0" else None
+                creator_name = creator.display_name if creator else "Unknown"
+            except:
+                creator_name = "Unknown"
             
             due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
             value = (
