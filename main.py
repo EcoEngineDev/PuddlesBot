@@ -559,12 +559,6 @@ class TaskEditView(discord.ui.View):
         
         # Add task selection dropdown
         self.add_item(TaskEditSelect(tasks))
-        
-        # Add edit buttons (disabled by default)
-        self.add_item(discord.ui.Button(label="Edit Name", custom_id="edit_name_btn", style=discord.ButtonStyle.primary, disabled=True))
-        self.add_item(discord.ui.Button(label="Edit Due Date", custom_id="edit_due_date_btn", style=discord.ButtonStyle.primary, disabled=True))
-        self.add_item(discord.ui.Button(label="Edit Description", custom_id="edit_desc_btn", style=discord.ButtonStyle.primary, disabled=True))
-        self.add_item(discord.ui.Button(label="Change Assignee", custom_id="edit_assignee_btn", style=discord.ButtonStyle.primary, disabled=True))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not self.selected_task:
@@ -583,22 +577,22 @@ class TaskEditView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Edit Name", custom_id="edit_name_btn", style=discord.ButtonStyle.primary, disabled=True)
+    @discord.ui.button(label="Edit Name", custom_id="edit_name_btn", style=discord.ButtonStyle.primary, disabled=True, row=1)
     async def edit_name(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = TaskEditModal(self.selected_task, "name")
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Edit Due Date", custom_id="edit_due_date_btn", style=discord.ButtonStyle.primary, disabled=True)
+    @discord.ui.button(label="Edit Due Date", custom_id="edit_due_date_btn", style=discord.ButtonStyle.primary, disabled=True, row=1)
     async def edit_due_date(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = TaskEditModal(self.selected_task, "due_date")
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Edit Description", custom_id="edit_desc_btn", style=discord.ButtonStyle.primary, disabled=True)
+    @discord.ui.button(label="Edit Description", custom_id="edit_desc_btn", style=discord.ButtonStyle.primary, disabled=True, row=2)
     async def edit_description(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = TaskEditModal(self.selected_task, "description")
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Change Assignee", custom_id="edit_assignee_btn", style=discord.ButtonStyle.primary, disabled=True)
+    @discord.ui.button(label="Change Assignee", custom_id="edit_assignee_btn", style=discord.ButtonStyle.primary, disabled=True, row=2)
     async def edit_assignee(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = TaskEditModal(self.selected_task, "assignee")
         await interaction.response.send_modal(modal)
@@ -759,28 +753,28 @@ async def taskedit(interaction: discord.Interaction):
     description="View tasks assigned to a specific user"
 )
 @app_commands.describe(
-    user="The user whose tasks you want to view"
+    target_user="The user whose tasks you want to view (mention the user)"
 )
 @log_command
-async def showtasks(interaction: discord.Interaction, user: discord.Member):
+async def showtasks(interaction: discord.Interaction, target_user: discord.Member):
     session = get_session()
     try:
         tasks = session.query(Task).filter_by(
             server_id=str(interaction.guild_id),
-            assigned_to=str(user.id),
+            assigned_to=str(target_user.id),
             completed=False
         ).order_by(Task.due_date).all()
         
         if not tasks:
             await interaction.response.send_message(
-                f"{user.display_name} has no active tasks!",
+                f"{target_user.display_name} has no active tasks!",
                 ephemeral=True
             )
             return
             
         embed = discord.Embed(
-            title=f"Tasks for {user.display_name}",
-            description=f"Here are the active tasks assigned to {user.display_name}:",
+            title=f"Tasks for {target_user.display_name}",
+            description=f"Here are the active tasks assigned to {target_user.display_name}:",
             color=discord.Color.blue()
         )
         
