@@ -996,14 +996,14 @@ class IntMsgConversation:
     def add_button(self, button_data):
         self.data['buttons'].append(button_data)
 
-async def start_intmsg_conversation(interaction, target_channel):
+async def start_intmsg_conversation(interaction):
     """Start the interactive message conversation"""
     user_id = str(interaction.user.id)
     intmsg_conversations[user_id] = IntMsgConversation(
         user_id, 
         str(interaction.channel_id), 
         str(interaction.guild_id),
-        str(target_channel.id)
+        None  # Will be set when user chooses channel
     )
 
 @client.event
@@ -1039,7 +1039,7 @@ async def handle_intmsg_conversation_step(message, conversation):
         conversation.step = 2
         await message.reply(
             f"✅ Title set to: **{content}**\n\n"
-            "**Step 2/6:** What should the **description** be? (or type `skip` for no description)"
+            "**Step 2/7:** What should the **description** be? (or type `skip` for no description)"
         )
     
     elif conversation.step == 2:  # Description
@@ -1048,7 +1048,7 @@ async def handle_intmsg_conversation_step(message, conversation):
         conversation.step = 3
         await message.reply(
             "✅ Description set!\n\n"
-            "**Step 3/6:** What **color** do you want? (hex format like `#FF0000` for red, or type `skip` for default blue)"
+            "**Step 3/7:** What **color** do you want? (hex format like `#FF0000` for red, or type `skip` for default blue)"
         )
     
     elif conversation.step == 3:  # Color
@@ -1065,7 +1065,7 @@ async def handle_intmsg_conversation_step(message, conversation):
         conversation.step = 4
         await message.reply(
             "✅ Color set!\n\n"
-            "**Step 4/6:** Do you want to add **ticket buttons**? \n"
+            "**Step 4/7:** Do you want to add **ticket buttons**? \n"
             "Type `yes` to add ticket buttons, or `no` to skip.\n\n"
             "*Ticket buttons create temporary channels when clicked.*"
         )
@@ -1094,7 +1094,7 @@ async def handle_intmsg_conversation_step(message, conversation):
         else:
             conversation.step = 5
             await message.reply(
-                "**Step 5/6:** Do you want to add **role buttons**?\n"
+                "**Step 5/7:** Do you want to add **role buttons**?\n"
                 "Type `yes` to add role buttons, or `no` to skip.\n\n"
                 "*Role buttons give/remove roles when clicked.*"
             )
@@ -1122,13 +1122,66 @@ async def handle_intmsg_conversation_step(message, conversation):
             )
         else:
             conversation.step = 6
-            await finalize_intmsg_creation(message, conversation)
+            await message.reply(
+                "**Step 6/7:** Which **channel** should this interactive message be sent to?\n"
+                "Please mention the channel (like #general) or type the channel name."
+            )
     
     elif conversation.step == 51:  # Role button details
         await parse_role_buttons(message, conversation, content)
     
-    elif conversation.step == 6:  # Final confirmation
-        await finalize_intmsg_creation(message, conversation)
+    elif conversation.step == 6:  # Channel selection
+        # Parse channel mention or name
+        channel = None
+        guild = client.get_guild(int(conversation.guild_id))
+        
+        # Try to parse channel mention like #general
+        if content.startswith('<#') and content.endswith('>'):
+            try:
+                channel_id = content[2:-1]
+                channel = guild.get_channel(int(channel_id))
+            except:
+                pass
+        
+        # Try to find channel by name
+        if not channel:
+            # Remove # if present
+            channel_name = content.lstrip('#').lower()
+            for c in guild.text_channels:
+                if c.name.lower() == channel_name:
+                    channel = c
+                    break
+        
+        if not channel:
+            await message.reply(
+                "❌ Channel not found! Please mention a valid channel (like #general) or type the exact channel name."
+            )
+            return
+        
+        # Check if bot can send messages to the target channel
+        if not channel.permissions_for(guild.me).send_messages:
+            await message.reply(
+                f"❌ I don't have permission to send messages in {channel.mention}!"
+            )
+            return
+        
+        # Set the target channel
+        conversation.target_channel_id = str(channel.id)
+        conversation.step = 7
+        
+        await message.reply(
+            f"✅ Channel set to {channel.mention}!\n\n"
+            "**Step 7/7:** Ready to create your interactive message!\n"
+            "Type `confirm` to create the message, or `cancel` to abort."
+        )
+    
+    elif conversation.step == 7:  # Final confirmation
+        if content.lower() == 'confirm':
+            await finalize_intmsg_creation(message, conversation)
+        else:
+            await message.reply(
+                "Please type `confirm` to create the message, or `cancel` to abort the creation process."
+            )
 
 async def parse_ticket_buttons(message, conversation, content):
     """Parse ticket button configuration"""
@@ -1180,7 +1233,7 @@ async def parse_ticket_buttons(message, conversation, content):
             conversation.step = 5
             await message.reply(
                 f"✅ Added {len(button_configs)} ticket button(s)!\n\n"
-                "**Step 5/6:** Do you want to add **role buttons**?\n"
+                "**Step 5/7:** Do you want to add **role buttons**?\n"
                 "Type `yes` to add role buttons, or `no` to skip."
             )
         
@@ -1243,7 +1296,11 @@ async def parse_role_buttons(message, conversation, content):
             await add_buttons_to_existing_message(message, conversation, 'role')
         else:
             conversation.step = 6
-            await finalize_intmsg_creation(message, conversation)
+            await message.reply(
+                f"✅ Added {len(button_configs)} role button(s)!\n\n"
+                "**Step 6/7:** Which **channel** should this interactive message be sent to?\n"
+                "Please mention the channel (like #general) or type the channel name."
+            )
         
     except Exception as e:
         await message.reply(
@@ -1771,11 +1828,8 @@ class MessageManagementView(discord.ui.View):
     name="intmsg",
     description="Create an interactive message with customizable buttons"
 )
-@app_commands.describe(
-    channel="The channel where the interactive message will be sent (optional, defaults to current channel)"
-)
 @log_command
-async def intmsg(interaction: discord.Interaction, channel: discord.TextChannel = None):
+async def intmsg(interaction: discord.Interaction):
     """Create an interactive message with buttons for tickets and roles"""
     # Check if user can create interactive messages
     if not await can_create_intmsg(interaction):
@@ -1787,27 +1841,15 @@ async def intmsg(interaction: discord.Interaction, channel: discord.TextChannel 
         )
         return
     
-    # Default to current channel if none specified
-    if channel is None:
-        channel = interaction.channel
-    
-    # Check if bot can send messages to the target channel
-    if not channel.permissions_for(interaction.guild.me).send_messages:
-        await interaction.response.send_message(
-            f"❌ I don't have permission to send messages in {channel.mention}!",
-            ephemeral=True
-        )
-        return
-    
     await interaction.response.send_message(
-        f"🎨 **Interactive Message Creator Started!**\n\n"
-        f"I'll guide you through creating your interactive message for {channel.mention}. You can cancel anytime by typing `cancel`.\n\n"
-        "**Step 1/6:** What should the **title** of your message be?",
+        "🎨 **Interactive Message Creator Started!**\n\n"
+        "I'll guide you through creating your interactive message. You can cancel anytime by typing `cancel`.\n\n"
+        "**Step 1/7:** What should the **title** of your message be?",
         ephemeral=True
     )
     
     # Start the conversation flow
-    await start_intmsg_conversation(interaction, channel)
+    await start_intmsg_conversation(interaction)
 
 @client.tree.command(
     name="imw",
