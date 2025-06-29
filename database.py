@@ -14,6 +14,7 @@ class Task(Base):
     due_date = Column(DateTime, nullable=False)
     description = Column(String)
     completed = Column(Boolean, default=False)
+    completed_at = Column(DateTime, nullable=True)  # When the task was completed
     created_at = Column(DateTime, default=datetime.utcnow)
     
 # Create database engine

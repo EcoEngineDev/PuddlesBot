@@ -63,11 +63,32 @@ class PuddlesBot(discord.Client):
 
 client = PuddlesBot()
 
+class UserButton(discord.ui.Button):
+    def __init__(self, user: discord.Member):
+        super().__init__(
+            label=user.display_name,
+            style=discord.ButtonStyle.secondary
+        )
+        self.user = user
+
+    async def callback(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title=f"User Profile: {self.user.display_name}",
+            color=discord.Color.blue()
+        )
+        embed.set_thumbnail(url=self.user.display_avatar.url)
+        embed.add_field(name="Joined Server", value=self.user.joined_at.strftime("%Y-%m-%d"))
+        embed.add_field(name="Account Created", value=self.user.created_at.strftime("%Y-%m-%d"))
+        embed.add_field(name="Roles", value=", ".join([role.name for role in self.user.roles[1:]]) or "No roles", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 class TaskView(discord.ui.View):
-    def __init__(self, tasks, show_complete=True):
+    def __init__(self, tasks, show_complete=True, user=None):
         super().__init__(timeout=180)
         self.tasks = tasks
         self.show_complete = show_complete
+        if user:
+            self.add_item(UserButton(user))
         self.update_buttons()
 
     def update_buttons(self):
@@ -210,11 +231,11 @@ async def mytasks(interaction: discord.Interaction):
         ).order_by(Task.due_date).all()
         
         if not tasks:
-            await interaction.response.send_message(f"{interaction.user.name} has no pending tasks! 🎉")
+            await interaction.response.send_message(f"No pending tasks! 🎉")
             return
             
         embed = discord.Embed(
-            title=f"Tasks for {interaction.user.name}",
+            title=f"Tasks",
             description="Select a task to view details or mark as complete:",
             color=discord.Color.blue()
         )
@@ -226,7 +247,7 @@ async def mytasks(interaction: discord.Interaction):
                 inline=False
             )
         
-        view = TaskView(tasks)
+        view = TaskView(tasks, user=interaction.user)
         await interaction.response.send_message(embed=embed, view=view)
         
     finally:
@@ -308,6 +329,68 @@ async def quack(interaction: discord.Interaction):
         await interaction.response.send_message("Sorry, couldn't fetch a duck right now! 😢")
 
 @client.tree.command(
+    name="oldtasks",
+    description="View completed tasks and their status"
+)
+async def oldtasks(interaction: discord.Interaction):
+    session = get_session()
+    try:
+        completed_tasks = session.query(Task).filter_by(completed=True).order_by(Task.due_date.desc()).all()
+        
+        if not completed_tasks:
+            await interaction.response.send_message("No completed tasks found!")
+            return
+            
+        embed = discord.Embed(
+            title="Completed Tasks History",
+            description="Here are all completed tasks and their status:",
+            color=discord.Color.gold()
+        )
+        
+        # Group tasks by user
+        tasks_by_user = {}
+        for task in completed_tasks:
+            user_id = task.assigned_to
+            if user_id not in tasks_by_user:
+                tasks_by_user[user_id] = []
+            tasks_by_user[user_id].append(task)
+        
+        view = discord.ui.View(timeout=180)
+        
+        # Add tasks to embed, grouped by user
+        for user_id, user_tasks in tasks_by_user.items():
+            try:
+                user = await client.fetch_user(int(user_id))
+                if not user:
+                    continue
+                    
+                # Add user profile button
+                view.add_item(UserButton(user))
+                
+                tasks_text = []
+                for task in user_tasks:
+                    # Check if task was completed before or after due date
+                    completed_status = "✅ On time" if task.completed_at <= task.due_date else "⚠️ Late"
+                    tasks_text.append(
+                        f"• {task.name}\n"
+                        f"  Due: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\n"
+                        f"  Status: {completed_status}"
+                    )
+                
+                embed.add_field(
+                    name=f"Tasks completed by {user.display_name}",
+                    value="\n".join(tasks_text) or "No completed tasks",
+                    inline=False
+                )
+            except:
+                continue
+        
+        await interaction.response.send_message(embed=embed, view=view)
+        
+    finally:
+        session.close()
+
+@client.tree.command(
     name="alltasks",
     description="View all tasks in the server"
 )
@@ -334,11 +417,17 @@ async def alltasks(interaction: discord.Interaction):
                 tasks_by_user[user_id] = []
             tasks_by_user[user_id].append(task)
         
+        view = discord.ui.View(timeout=180)
+        
         # Add tasks to embed
         for user_id, user_tasks in tasks_by_user.items():
             try:
                 user = await client.fetch_user(int(user_id))
-                user_name = user.name if user else "Unknown User"
+                if not user:
+                    continue
+                
+                # Add user profile button
+                view.add_item(UserButton(user))
                 
                 tasks_text = "\n".join([
                     f"• {task.name} (Due: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')})"
@@ -346,14 +435,13 @@ async def alltasks(interaction: discord.Interaction):
                 ])
                 
                 embed.add_field(
-                    name=f"Tasks for {user_name}",
+                    name=f"Tasks for {user.display_name}",
                     value=tasks_text,
                     inline=False
                 )
             except:
                 continue
         
-        view = TaskView(tasks, show_complete=False)  # Don't show complete buttons for all tasks view
         await interaction.response.send_message(embed=embed, view=view)
         
     finally:
@@ -375,12 +463,12 @@ async def showtasks(interaction: discord.Interaction, user: discord.Member):
         ).order_by(Task.due_date).all()
         
         if not tasks:
-            await interaction.response.send_message(f"{user.name} has no pending tasks! 🎉")
+            await interaction.response.send_message(f"No pending tasks! 🎉")
             return
             
         embed = discord.Embed(
-            title=f"Tasks for {user.name}",
-            description=f"Here are the pending tasks for {user.mention}:",
+            title=f"Tasks",
+            description="Here are the pending tasks:",
             color=discord.Color.blue()
         )
         
@@ -391,7 +479,7 @@ async def showtasks(interaction: discord.Interaction, user: discord.Member):
                 inline=False
             )
         
-        view = TaskView(tasks, show_complete=False)  # Don't show complete buttons for other users' tasks
+        view = TaskView(tasks, show_complete=False, user=user)
         await interaction.response.send_message(embed=embed, view=view)
         
     finally:
