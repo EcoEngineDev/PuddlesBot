@@ -9,6 +9,8 @@ from database import Task, get_session
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from typing import Optional
+import traceback
+import sys
 
 # Initialize bot with all intents
 class PuddlesBot(discord.Client):
@@ -28,6 +30,7 @@ class PuddlesBot(discord.Client):
             print("Available commands: /task, /mytasks, /taskedit, /quack")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
+            print("Full error:", traceback.format_exc())
         
         self.scheduler.start()
         self.scheduler.add_job(self.check_due_tasks, 'interval', hours=1)
@@ -60,6 +63,10 @@ class PuddlesBot(discord.Client):
                         pass
         finally:
             session.close()
+
+    async def on_error(self, event, *args, **kwargs):
+        print(f"Error in {event}:", file=sys.stderr)
+        traceback.print_exc()
 
 client = PuddlesBot()
 
@@ -174,6 +181,25 @@ class TaskView(discord.ui.View):
             
         await interaction.response.edit_message(embed=embed, view=self)
 
+# Error handling decorator
+def handle_errors(func):
+    async def wrapper(*args, **kwargs):
+        try:
+            print(f"Executing command: {func.__name__}")
+            return await func(*args, **kwargs)
+        except Exception as e:
+            print(f"Error in {func.__name__}:")
+            print(traceback.format_exc())
+            
+            # Get the interaction object
+            interaction = next((arg for arg in args if isinstance(arg, discord.Interaction)), None)
+            if interaction and not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"An error occurred while processing the command. Error: {str(e)}",
+                    ephemeral=True
+                )
+    return wrapper
+
 @client.tree.command(
     name="task",
     description="Create a new task"
@@ -184,9 +210,14 @@ class TaskView(discord.ui.View):
     due_date="Due date in YYYY-MM-DD HH:MM format (24-hour)",
     description="Description of the task"
 )
+@handle_errors
 async def task(interaction: discord.Interaction, name: str, assigned_to: discord.Member, due_date: str, description: str):
+    print(f"Task command called by {interaction.user.name}")
+    print(f"Parameters: name={name}, assigned_to={assigned_to}, due_date={due_date}, description={description}")
+    
     try:
         due_date_dt = parser.parse(due_date)
+        print(f"Parsed due date: {due_date_dt}")
         
         session = get_session()
         try:
@@ -196,46 +227,64 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
                 due_date=due_date_dt,
                 description=description
             )
+            print("Created new task object")
             session.add(new_task)
             session.commit()
+            print("Task committed to database")
             
             embed = discord.Embed(
                 title="✅ Task Created",
-                description=f"Task '{name}' has been assigned to {assigned_to.mention}",
+                description=f"Task '{name}' has been assigned to {assigned_to.display_name}",
                 color=discord.Color.green()
             )
             embed.add_field(name="Due Date", value=due_date_dt.strftime('%Y-%m-%d %H:%M UTC'))
             await interaction.response.send_message(embed=embed)
+            print("Task creation response sent")
             
             try:
-                await assigned_to.send(f"You have been assigned a new task: **{name}**\nDue: {due_date_dt.strftime('%Y-%m-%d %H:%M UTC')}\n\nDescription:\n{description}")
+                await assigned_to.send(
+                    f"You have been assigned a new task: **{name}**\n"
+                    f"Due: {due_date_dt.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+                    f"Description:\n{description}"
+                )
+                print("DM sent to assigned user")
             except discord.Forbidden:
+                print("Could not send DM to user - messages blocked")
                 pass
                 
         finally:
             session.close()
+            print("Database session closed")
             
-    except ValueError:
-        await interaction.response.send_message("Invalid date format. Please use YYYY-MM-DD HH:MM format.", ephemeral=True)
+    except ValueError as e:
+        print(f"Date parsing error: {e}")
+        await interaction.response.send_message(
+            "Invalid date format. Please use YYYY-MM-DD HH:MM format.",
+            ephemeral=True
+        )
 
 @client.tree.command(
     name="mytasks",
     description="View your tasks"
 )
+@handle_errors
 async def mytasks(interaction: discord.Interaction):
+    print(f"Mytasks command called by {interaction.user.name}")
     session = get_session()
     try:
         tasks = session.query(Task).filter_by(
             assigned_to=str(interaction.user.id),
             completed=False
         ).order_by(Task.due_date).all()
+        print(f"Found {len(tasks)} tasks for user")
         
         if not tasks:
-            await interaction.response.send_message(f"No pending tasks! 🎉")
+            await interaction.response.send_message("No pending tasks! 🎉")
+            print("No tasks found response sent")
             return
             
         embed = discord.Embed(
-            title=f"Tasks",
+            title="Tasks",
             description="Select a task to view details or mark as complete:",
             color=discord.Color.blue()
         )
@@ -246,12 +295,15 @@ async def mytasks(interaction: discord.Interaction):
                 value=f"Due: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}",
                 inline=False
             )
+        print("Created tasks embed")
         
         view = TaskView(tasks, user=interaction.user)
         await interaction.response.send_message(embed=embed, view=view)
+        print("Tasks list response sent")
         
     finally:
         session.close()
+        print("Database session closed")
 
 @client.tree.command(
     name="taskedit",
@@ -484,6 +536,20 @@ async def showtasks(interaction: discord.Interaction, user: discord.Member):
         
     finally:
         session.close()
+
+@client.event
+async def on_interaction(interaction: discord.Interaction):
+    print(f"Received interaction: {interaction.command.name if interaction.command else 'unknown'}")
+    try:
+        await client.tree.process_interaction(interaction)
+    except Exception as e:
+        print(f"Error processing interaction: {e}")
+        print(traceback.format_exc())
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "An error occurred while processing the command.",
+                ephemeral=True
+            )
 
 # Keep the bot alive
 keep_alive()
