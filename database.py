@@ -78,17 +78,27 @@ def init_db():
             return
             
         try:
-            # If database exists, delete it
-            if os.path.exists(DB_FILE):
-                os.remove(DB_FILE)
-                print("Removed old database file")
+            # Create database engine (this will create the database file if it doesn't exist)
+            engine = create_engine(f'sqlite:///{DB_FILE}', echo=False)
             
-            # Create new database engine
-            engine = create_engine(f'sqlite:///{DB_FILE}', echo=True)
-            
-            # Create all tables
+            # Create all tables (this only creates tables that don't already exist)
             Base.metadata.create_all(bind=engine)
-            print("Created new database with updated schema")
+            
+            if os.path.exists(DB_FILE):
+                print(f"Database initialized successfully at: {DB_FILE}")
+                # Check if database has existing data
+                Session = sessionmaker(bind=engine)
+                session = Session()
+                try:
+                    task_count = session.query(Task).count()
+                    creator_count = session.query(TaskCreator).count()
+                    print(f"Database contains {task_count} tasks and {creator_count} task creators")
+                except:
+                    print("Database tables created successfully")
+                finally:
+                    session.close()
+            else:
+                print("New database created successfully")
             
             _is_initialized = True
             return engine
