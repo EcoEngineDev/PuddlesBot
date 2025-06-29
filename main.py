@@ -21,11 +21,13 @@ class PuddlesBot(discord.Client):
         self.scheduler = AsyncIOScheduler()
         
     async def setup_hook(self):
-        # This is called when the bot starts
         print("Syncing commands...")
-        # Sync commands with Discord
-        await self.tree.sync()
-        print("Commands synced!")
+        try:
+            await self.tree.sync(guild=None)  # None means global sync
+            print("Commands synced successfully!")
+            print("Available commands: /task, /mytasks, /taskedit, /quack")
+        except Exception as e:
+            print(f"Failed to sync commands: {e}")
         
         self.scheduler.start()
         self.scheduler.add_job(self.check_due_tasks, 'interval', hours=1)
@@ -131,7 +133,10 @@ class TaskView(discord.ui.View):
         embed.set_footer(text=f"Task {self.current_page + 1} of {len(self.tasks)}")
         await interaction.response.edit_message(embed=embed, view=self)
 
-@client.tree.command(name="task", description="Create a new task")
+@client.tree.command(
+    name="task",
+    description="Create a new task"
+)
 @app_commands.describe(
     name="Name of the task",
     assigned_to="User to assign the task to (mention the user)",
@@ -172,7 +177,10 @@ async def task(interaction: discord.Interaction, name: str, assigned_to: discord
     except ValueError:
         await interaction.response.send_message("Invalid date format. Please use YYYY-MM-DD HH:MM format.", ephemeral=True)
 
-@client.tree.command(name="mytasks", description="View your tasks")
+@client.tree.command(
+    name="mytasks",
+    description="View your tasks"
+)
 async def mytasks(interaction: discord.Interaction):
     session = get_session()
     try:
@@ -198,7 +206,10 @@ async def mytasks(interaction: discord.Interaction):
     finally:
         session.close()
 
-@client.tree.command(name="taskedit", description="Edit a task (Admin only)")
+@client.tree.command(
+    name="taskedit",
+    description="Edit a task (Admin only)"
+)
 @app_commands.describe(
     task_name="Name of the task to edit",
     new_name="New name for the task (optional)",
@@ -256,7 +267,10 @@ async def taskedit(
     finally:
         session.close()
 
-@client.tree.command(name="quack", description="Get a random duck image!")
+@client.tree.command(
+    name="quack",
+    description="Get a random duck image!"
+)
 async def quack(interaction: discord.Interaction):
     response = requests.get('https://random-d.uk/api/v2/random')
     if response.status_code == 200:
