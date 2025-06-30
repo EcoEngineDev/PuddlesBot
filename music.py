@@ -188,8 +188,32 @@ class MusicPlayer:
         self.skip_votes = set()
         self.auto_leave_task = None
         
+    async def _safe_disconnect(self, force: bool = True, full_cleanup: bool = True):
+        """Safely disconnect from voice channel with proper cleanup"""
+        if self.voice_client:
+            try:
+                # Check if voice client is in a valid state
+                if hasattr(self.voice_client, 'is_connected') and self.voice_client.is_connected():
+                    await self.voice_client.disconnect(force=force)
+                else:
+                    # Voice client exists but not connected, force cleanup
+                    if hasattr(self.voice_client, 'cleanup'):
+                        self.voice_client.cleanup()
+            except Exception as e:
+                print(f"Warning: Error during voice disconnect: {e}")
+            finally:
+                self.voice_client = None
+        
+        if full_cleanup:
+            # Reset playback state
+            self.is_playing = False
+            self.is_paused = False
+            if self.auto_leave_task:
+                self.auto_leave_task.cancel()
+                self.auto_leave_task = None
+        
     async def connect(self, channel: discord.VoiceChannel):
-        """Connect to a voice channel using Pycord's improved voice handling"""
+        """Connect to a voice channel with enhanced retry logic and permission checking"""
         # Check bot permissions first
         permissions = channel.permissions_for(channel.guild.me)
         if not permissions.connect:
@@ -198,12 +222,7 @@ class MusicPlayer:
             raise discord.errors.ClientException("Bot lacks 'Speak' permission for this voice channel")
         
         # Clean up any existing failed connection
-        if self.voice_client and not self.voice_client.is_connected():
-            try:
-                await self.voice_client.disconnect(force=True)
-            except:
-                pass
-            self.voice_client = None
+        await self._safe_disconnect(force=True, full_cleanup=False)
             
         try:
             if self.voice_client and self.voice_client.is_connected():
@@ -215,79 +234,57 @@ class MusicPlayer:
                     print(f"✅ Already connected to voice channel: {channel.name}")
                     return
             
-            print(f"🔗 Attempting to connect to voice channel: {channel.name} (using Pycord)")
+            # Enhanced connection strategy for hosted environments
+            print(f"🔗 Attempting to connect to voice channel: {channel.name}")
             
-            # Pycord has better voice connection handling for hosted environments
-            try:
-                # Use Pycord's improved connection with better timeout handling
-                self.voice_client = await channel.connect(
-                    timeout=60.0,           # Longer timeout for hosted environments
-                    reconnect=True,         # Enable automatic reconnection
-                    self_deaf=True,         # Optimize performance by self-deafening
-                )
-                
-                # Verify connection
-                if self.voice_client and self.voice_client.is_connected():
-                    print(f"✅ Successfully connected to voice channel: {channel.name}")
-                    # Small delay to ensure connection is stable
-                    await asyncio.sleep(1)
-                    return
-                else:
-                    raise discord.errors.ClientException("Connection established but not properly connected")
+            # Strategy 1: Direct connection with longer timeout
+            for attempt in range(2):
+                try:
+                    print(f"📡 Voice connection attempt {attempt + 1}/2...")
                     
-            except discord.errors.ClientException as e:
-                print(f"⚠️ Pycord voice connection failed: {type(e).__name__}: {e}")
-                
-                # Check for specific hosting environment issues
-                if any(error_code in str(e) for error_code in ["4006", "4014", "Session no longer valid", "Invalid session"]):
-                    raise discord.errors.ClientException(
-                        "Voice connection failed due to hosting environment limitations. "
-                        "This hosting platform may not support Discord voice features."
+                    # Use a longer timeout for hosted environments
+                    self.voice_client = await asyncio.wait_for(
+                        channel.connect(timeout=30.0, reconnect=True), 
+                        timeout=45.0
                     )
-                else:
-                    # Try one more time with different settings
-                    try:
-                        print("🔄 Retrying with fallback settings...")
-                        await asyncio.sleep(3)
+                    
+                    # Verify connection is actually working
+                    if self.voice_client and self.voice_client.is_connected():
+                        print(f"✅ Successfully connected to voice channel: {channel.name}")
+                        # Small delay to ensure connection is stable
+                        await asyncio.sleep(1)
+                        return
+                    else:
+                        raise discord.errors.ClientException("Connection established but not properly connected")
                         
-                        self.voice_client = await channel.connect(
-                            timeout=30.0,
-                            reconnect=False,    # Disable reconnect for second attempt
-                            self_deaf=False,    # Don't self-deaf for compatibility
-                        )
-                        
-                        if self.voice_client and self.voice_client.is_connected():
-                            print(f"✅ Connected on retry to voice channel: {channel.name}")
-                            return
+                except (asyncio.TimeoutError, discord.errors.ConnectionClosed) as e:
+                    print(f"⚠️ Voice connection attempt {attempt + 1} failed: {type(e).__name__}: {e}")
+                    await self._safe_disconnect(force=True, full_cleanup=False)
+                    
+                    if attempt == 1:  # Last attempt
+                        # Check if this is a hosting environment limitation
+                        if "4006" in str(e) or "Session no longer valid" in str(e):
+                            raise discord.errors.ClientException(
+                                "Voice connection failed due to hosting environment limitations. "
+                                "This bot may not support voice features on this hosting platform."
+                            )
                         else:
-                            raise discord.errors.ClientException("Retry connection failed")
-                            
-                    except Exception as retry_error:
-                        print(f"❌ Retry failed: {retry_error}")
-                        raise discord.errors.ClientException(f"Voice connection failed: {str(e)}")
+                            raise discord.errors.ClientException(f"Voice connection failed after multiple attempts: {e}")
+                    
+                    # Wait longer between attempts for hosted environments
+                    await asyncio.sleep(5)
                     
         except discord.errors.ClientException:
             raise  # Re-raise client exceptions as-is
         except Exception as e:
             print(f"❌ Unexpected voice connection error: {e}")
-            if self.voice_client:
-                try:
-                    await self.voice_client.disconnect(force=True)
-                except:
-                    pass
-                self.voice_client = None
+            await self._safe_disconnect(force=True, full_cleanup=False)
             raise discord.errors.ClientException(f"Voice connection failed: {str(e)}")
             
     async def disconnect(self):
         """Disconnect from voice channel"""
-        if self.voice_client:
-            await self.voice_client.disconnect()
-            self.voice_client = None
-        self.is_playing = False
-        self.is_paused = False
+        await self._safe_disconnect(force=False, full_cleanup=True)
         self.current_song = None
-        if self.auto_leave_task:
-            self.auto_leave_task.cancel()
             
     async def add_song(self, song: Song):
         """Add a song to the queue"""
@@ -335,7 +332,12 @@ class MusicPlayer:
             )
             source = discord.PCMVolumeTransformer(source, volume=self.volume)
             
-            # Play the song
+            # Play the song with voice client validation
+            if not self.voice_client or not hasattr(self.voice_client, 'is_connected') or not self.voice_client.is_connected():
+                print("Voice client not available for playback")
+                await self.play_next()  # Skip to next song
+                return
+                
             self.voice_client.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(
                 self.play_next(), _client.loop
             ))
@@ -380,22 +382,37 @@ class MusicPlayer:
         
     def pause(self):
         """Pause playback"""
-        if self.voice_client and self.voice_client.is_playing():
-            self.voice_client.pause()
-            self.is_paused = True
+        try:
+            if self.voice_client and hasattr(self.voice_client, 'is_playing') and self.voice_client.is_playing():
+                self.voice_client.pause()
+                self.is_paused = True
+                return True
+        except Exception as e:
+            print(f"Warning: Error pausing playback: {e}")
+        return False
             
     def resume(self):
         """Resume playback"""
-        if self.voice_client and self.voice_client.is_paused():
-            self.voice_client.resume()
-            self.is_paused = False
+        try:
+            if self.voice_client and hasattr(self.voice_client, 'is_paused') and self.voice_client.is_paused():
+                self.voice_client.resume()
+                self.is_paused = False
+                return True
+        except Exception as e:
+            print(f"Warning: Error resuming playback: {e}")
+        return False
             
     def stop(self):
         """Stop playback"""
-        if self.voice_client and (self.voice_client.is_playing() or self.voice_client.is_paused()):
-            self.voice_client.stop()
-        self.is_playing = False
-        self.is_paused = False
+        try:
+            if self.voice_client and hasattr(self.voice_client, 'is_playing'):
+                if self.voice_client.is_playing() or (hasattr(self.voice_client, 'is_paused') and self.voice_client.is_paused()):
+                    self.voice_client.stop()
+        except Exception as e:
+            print(f"Warning: Error stopping playback: {e}")
+        finally:
+            self.is_playing = False
+            self.is_paused = False
         
     def skip(self):
         """Skip current song"""
@@ -404,8 +421,16 @@ class MusicPlayer:
     def set_volume(self, volume: float):
         """Set playback volume (0.0 to 1.0)"""
         self.volume = max(0.0, min(1.0, volume))
-        if self.voice_client and hasattr(self.voice_client.source, 'volume'):
-            self.voice_client.source.volume = self.volume
+        try:
+            if (self.voice_client and 
+                hasattr(self.voice_client, 'source') and 
+                self.voice_client.source and 
+                hasattr(self.voice_client.source, 'volume')):
+                self.voice_client.source.volume = self.volume
+                return True
+        except Exception as e:
+            print(f"Warning: Error setting volume: {e}")
+        return False
             
     def clear_queue(self):
         """Clear the queue"""
@@ -1082,13 +1107,6 @@ async def musicstatus(interaction: discord.Interaction):
     # Spotify status
     spotify_status = "✅ Configured" if spotify else "❌ Not configured"
     embed.add_field(name="Spotify Integration", value=spotify_status, inline=True)
-    
-    # Bot & Library Information
-    import platform
-    bot_info = f"**Pycord Version:** {discord.__version__}\n"
-    bot_info += f"**Python Version:** {platform.python_version()}\n"
-    bot_info += f"**OS:** {platform.system()} {platform.release()}"
-    embed.add_field(name="🤖 System Info", value=bot_info, inline=False)
     
     # Hosting environment
     env_info = detect_hosting_environment()
