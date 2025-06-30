@@ -34,7 +34,7 @@ class PuddlesBot(discord.Client):
         try:
             await self.tree.sync(guild=None)  # None means global sync
             print("Commands synced successfully!")
-            print("Available commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw, /quack")
+            print("Available commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw, /quack, /diceroll")
             print("Ticket system commands: /intmsg, /editintmsg, /listmessages, /ticketstats, /imw, /fixdb")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
@@ -1684,6 +1684,20 @@ async def finalize_intmsg_creation(message, conversation):
         
         # Build description with larger title
         description_text = conversation.data['description'] if conversation.data['description'] else ""
+        
+        # Extract pings from description for message content
+        ping_content = ""
+        cleaned_description = description_text
+        
+        if description_text:
+            # Check for @everyone and @here mentions
+            if "@everyone" in description_text:
+                ping_content += "@everyone "
+                # Keep @everyone in the description but it won't ping from embed
+            if "@here" in description_text:
+                ping_content += "@here "
+                # Keep @here in the description but it won't ping from embed
+        
         if description_text:
             full_description = f"# {conversation.data['title']}\n\n{description_text}"
         else:
@@ -1694,9 +1708,12 @@ async def finalize_intmsg_creation(message, conversation):
             color=color
         )
         
-        # Send the message to the target channel
+        # Send the message to the target channel with ping content if needed
         channel = client.get_channel(int(conversation.target_channel_id))
-        sent_message = await channel.send(embed=embed)
+        if ping_content.strip():
+            sent_message = await channel.send(content=ping_content.strip(), embed=embed)
+        else:
+            sent_message = await channel.send(embed=embed)
         
         # Update embed with message ID
         if description_text:
@@ -2571,6 +2588,90 @@ async def testpersistence(interaction: discord.Interaction):
     await client.load_persistent_views()
     
     await interaction.followup.send("✅ Persistence test complete! Check console for detailed output.", ephemeral=True)
+
+@client.tree.command(
+    name="diceroll",
+    description="Roll dice and see the results! 🎲"
+)
+@app_commands.describe(
+    number_of_dice="Number of 6-sided dice to roll (1-20)"
+)
+@log_command
+async def diceroll(interaction: discord.Interaction, number_of_dice: int):
+    """Roll dice and display results visually"""
+    
+    # Validate input
+    if number_of_dice < 1:
+        await interaction.response.send_message("❌ You need to roll at least 1 die!", ephemeral=True)
+        return
+    
+    if number_of_dice > 20:
+        await interaction.response.send_message("❌ Maximum 20 dice allowed!", ephemeral=True)
+        return
+    
+    try:
+        import random
+        
+        # Roll the dice
+        rolls = [random.randint(1, 6) for _ in range(number_of_dice)]
+        total = sum(rolls)
+        
+        # Dice face emojis
+        dice_faces = {
+            1: "⚀",
+            2: "⚁", 
+            3: "⚂",
+            4: "⚃",
+            5: "⚄",
+            6: "⚅"
+        }
+        
+        # Create visual representation
+        dice_visual = " ".join([dice_faces[roll] for roll in rolls])
+        
+        # Create embed
+        embed = discord.Embed(
+            title="🎲 Dice Roll Results",
+            color=discord.Color.random()
+        )
+        
+        embed.add_field(
+            name=f"Rolling {number_of_dice} dice:",
+            value=dice_visual,
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Individual rolls:",
+            value=f"`{', '.join(map(str, rolls))}`",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Total sum:",
+            value=f"**{total}**",
+            inline=True
+        )
+        
+        # Add some fun statistics for multiple dice
+        if number_of_dice > 1:
+            average = total / number_of_dice
+            min_possible = number_of_dice
+            max_possible = number_of_dice * 6
+            
+            embed.add_field(
+                name="Statistics:",
+                value=f"Average: {average:.1f}\nRange: {min_possible}-{max_possible}",
+                inline=True
+            )
+        
+        embed.set_footer(text=f"Rolled by {interaction.user.display_name}")
+        
+        await interaction.response.send_message(embed=embed)
+        
+    except Exception as e:
+        print(f"Error in diceroll command: {e}")
+        await interaction.response.send_message("❌ An error occurred while rolling dice!", ephemeral=True)
 
 # ============= END TICKET SYSTEM COMMANDS =============
 
