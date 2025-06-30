@@ -2594,7 +2594,7 @@ async def testpersistence(interaction: discord.Interaction):
     description="Roll dice and see the results! 🎲"
 )
 @app_commands.describe(
-    number_of_dice="Number of 6-sided dice to roll (1-20)"
+    number_of_dice="Number of 6-sided dice to roll (1-100)"
 )
 @log_command
 async def diceroll(interaction: discord.Interaction, number_of_dice: int):
@@ -2605,8 +2605,8 @@ async def diceroll(interaction: discord.Interaction, number_of_dice: int):
         await interaction.response.send_message("❌ You need to roll at least 1 die!", ephemeral=True)
         return
     
-    if number_of_dice > 20:
-        await interaction.response.send_message("❌ Maximum 20 dice allowed!", ephemeral=True)
+    if number_of_dice > 100:
+        await interaction.response.send_message("❌ Maximum 100 dice allowed!", ephemeral=True)
         return
     
     try:
@@ -2626,8 +2626,17 @@ async def diceroll(interaction: discord.Interaction, number_of_dice: int):
             6: "⚅"
         }
         
-        # Create visual representation
-        dice_visual = " ".join([dice_faces[roll] for roll in rolls])
+        # Create visual representation with bigger spacing
+        dice_visual = "  ".join([dice_faces[roll] for roll in rolls])
+        
+        # For many dice, break into lines of 20 for better readability
+        if number_of_dice > 20:
+            dice_lines = []
+            for i in range(0, len(rolls), 20):
+                line_rolls = rolls[i:i+20]
+                line_visual = "  ".join([dice_faces[roll] for roll in line_rolls])
+                dice_lines.append(line_visual)
+            dice_visual = "\n".join(dice_lines)
         
         # Create embed
         embed = discord.Embed(
@@ -2637,7 +2646,7 @@ async def diceroll(interaction: discord.Interaction, number_of_dice: int):
         
         embed.add_field(
             name=f"Rolling {number_of_dice} dice:",
-            value=dice_visual,
+            value=f"```\n{dice_visual}\n```",
             inline=False
         )
         
