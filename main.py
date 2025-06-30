@@ -1860,7 +1860,7 @@ class EditIntMsgView(discord.ui.View):
     async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         session = get_session()
         try:
-            interactive_msg = session.query(InteractiveMessage).get(self.message_id)
+            interactive_msg = session.get(InteractiveMessage, self.message_id)
             if not interactive_msg or not interactive_msg.buttons:
                 await interaction.response.send_message("❌ No buttons to remove!", ephemeral=True)
                 return
@@ -1901,11 +1901,32 @@ class EditMessageModal(discord.ui.Modal):
         # Load current values
         session = get_session()
         try:
-            interactive_msg = session.query(InteractiveMessage).get(message_id)
+            interactive_msg = session.get(InteractiveMessage, message_id)
             current_title = interactive_msg.title if interactive_msg else ""
             current_desc = interactive_msg.description if interactive_msg else ""
-            current_color = interactive_msg.color if interactive_msg else "#5865F2"
-        except:
+            
+            # Ensure color is properly formatted as #RRGGBB (7 characters max)
+            if interactive_msg and interactive_msg.color:
+                color_value = interactive_msg.color
+                # Handle different color formats and convert to #RRGGBB
+                if color_value.startswith('0x'):
+                    # Convert 0x5865f2 to #5865F2
+                    current_color = f"#{color_value[2:].upper()}"
+                elif color_value.startswith('#'):
+                    # Already in correct format, just ensure uppercase
+                    current_color = color_value.upper()
+                else:
+                    # Assume it's just the hex digits
+                    current_color = f"#{color_value.upper()}"
+                
+                # Ensure it's exactly 7 characters (#RRGGBB)
+                if len(current_color) != 7:
+                    current_color = "#5865F2"  # Default if invalid
+            else:
+                current_color = "#5865F2"
+                
+        except Exception as e:
+            print(f"Error loading interactive message data: {e}")
             current_title = ""
             current_desc = ""
             current_color = "#5865F2"
@@ -1943,7 +1964,7 @@ class EditMessageModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         session = get_session()
         try:
-            interactive_msg = session.query(InteractiveMessage).get(self.message_id)
+            interactive_msg = session.get(InteractiveMessage, self.message_id)
             if not interactive_msg:
                 await interaction.response.send_message("❌ Interactive message not found!", ephemeral=True)
                 return
@@ -2021,7 +2042,7 @@ class ButtonRemovalSelect(discord.ui.Select):
         session = get_session()
         try:
             button_id = int(self.values[0])
-            button = session.query(MessageButton).get(button_id)
+            button = session.get(MessageButton, button_id)
             
             if not button:
                 await interaction.response.send_message("❌ Button not found!", ephemeral=True)
@@ -2061,7 +2082,7 @@ class MessageManagementView(discord.ui.View):
     async def _update_interactive_message(self, interaction: discord.Interaction):
         session = get_session()
         try:
-            interactive_msg = session.query(InteractiveMessage).get(self.message_id)
+            interactive_msg = session.get(InteractiveMessage, self.message_id)
             if not interactive_msg:
                 await interaction.response.send_message("❌ Interactive message not found!", ephemeral=True)
                 return
