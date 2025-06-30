@@ -1194,6 +1194,85 @@ async def quack(interaction: discord.Interaction):
             ephemeral=True
         )
 
+class PaginatedTaskView(discord.ui.View):
+    def __init__(self, tasks, tasks_per_page=5):
+        super().__init__(timeout=300)
+        self.tasks = tasks
+        self.tasks_per_page = tasks_per_page
+        self.current_page = 0
+        self.total_pages = max(1, (len(tasks) + tasks_per_page - 1) // tasks_per_page)
+        
+        # Update button states
+        self.update_buttons()
+    
+    def update_buttons(self):
+        # Update Previous button
+        self.previous_button.disabled = (self.current_page == 0)
+        
+        # Update Next button  
+        self.next_button.disabled = (self.current_page >= self.total_pages - 1)
+    
+    def get_current_page_embed(self):
+        start_idx = self.current_page * self.tasks_per_page
+        end_idx = min(start_idx + self.tasks_per_page, len(self.tasks))
+        current_tasks = self.tasks[start_idx:end_idx]
+        
+        if len(self.tasks) == 0:
+            embed = discord.Embed(
+                title="All Active Tasks",
+                description="No active tasks found in this server.",
+                color=discord.Color.blue()
+            )
+        else:
+            embed = discord.Embed(
+                title="All Active Tasks",
+                description=f"**Page {self.current_page + 1} of {self.total_pages}** • Showing {len(current_tasks)} of {len(self.tasks)} tasks",
+                color=discord.Color.blue()
+            )
+            
+            for i, task in enumerate(current_tasks):
+                task_number = start_idx + i + 1
+                # Use the pre-fetched user names we stored in the task objects
+                assigned_name = getattr(task, '_assigned_name', 'Unknown')
+                creator_name = getattr(task, '_creator_name', 'Unknown')
+                
+                due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
+                value = (
+                    f"Assigned to: {assigned_name}\n"
+                    f"Created by: {creator_name}\n"
+                    f"Due: {due_date}\n"
+                    f"Description: {task.description}"
+                )
+                embed.add_field(name=f"{task_number}. {task.name}", value=value, inline=False)
+        
+        return embed
+    
+    @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.secondary, disabled=True)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            embed = self.get_current_page_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+    
+    @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.update_buttons()
+            embed = self.get_current_page_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+    
+    @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.primary)
+    async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Refresh the current page
+        embed = self.get_current_page_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
 @client.tree.command(
     name="alltasks",
     description="View all active tasks in the server (Admin only)"
@@ -1214,41 +1293,40 @@ async def alltasks(interaction: discord.Interaction):
                 ephemeral=True
             )
             return
-            
-        embed = discord.Embed(
-            title="All Active Tasks",
-            description="Here are all active tasks in the server:",
-            color=discord.Color.blue()
-        )
         
+        # Defer the response since we might need time to fetch user data
+        await interaction.response.defer()
+        
+        # Pre-fetch user information and store it in task objects
         for task in tasks:
             try:
                 assigned_to = await client.fetch_user(int(task.assigned_to))
-                assigned_name = assigned_to.display_name if assigned_to else "Unknown"
+                task._assigned_name = assigned_to.display_name if assigned_to else "Unknown"
                 creator = await client.fetch_user(int(task.created_by)) if task.created_by != "0" else None
-                creator_name = creator.display_name if creator else "Unknown"
+                task._creator_name = creator.display_name if creator else "Unknown"
             except:
-                assigned_name = "Unknown"
-                creator_name = "Unknown"
-            
-            due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
-            value = (
-                f"Assigned to: {assigned_name}\n"
-                f"Created by: {creator_name}\n"
-                f"Due: {due_date}\n"
-                f"Description: {task.description}"
-            )
-            embed.add_field(name=task.name, value=value, inline=False)
+                task._assigned_name = "Unknown"
+                task._creator_name = "Unknown"
         
-        await interaction.response.send_message(embed=embed)
+        # Create paginated view
+        view = PaginatedTaskView(tasks, tasks_per_page=5)
+        embed = view.get_current_page_embed()
+        
+        await interaction.followup.send(embed=embed, view=view)
         
     except Exception as e:
         print(f"Error in alltasks command: {str(e)}")
         print(traceback.format_exc())
-        await interaction.response.send_message(
-            f"An error occurred while fetching tasks: {str(e)}",
-            ephemeral=True
-        )
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"An error occurred while fetching tasks: {str(e)}",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"An error occurred while fetching tasks: {str(e)}",
+                ephemeral=True
+            )
     finally:
         session.close()
 
