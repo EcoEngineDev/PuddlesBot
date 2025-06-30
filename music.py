@@ -264,64 +264,65 @@ class MusicPlayer:
             print(f"🔗 Attempting to connect to voice channel: {channel.name}")
             
             # Direct connection with extended verification
-            for attempt in range(1):  # Reduced to single attempt with better verification
-                try:
-                    print(f"📡 Voice connection attempt {attempt + 1}/1...")
+              # Reduced to single attempt with better verification
+            attempt = 1
+            try:
+                print(f"📡 Voice connection attempt {attempt + 1}/1...")
+                
+                # Check if we somehow already have a working connection before attempting
+                if self.voice_client and hasattr(self.voice_client, 'is_connected') and self.voice_client.is_connected():
+                    print(f"✅ Connection already established")
+                    return
+                
+                # Use a longer timeout for hosted environments
+                self.voice_client = await asyncio.wait_for(
+                    channel.connect(timeout=30.0, reconnect=True), 
+                    timeout=45.0
+                )
+                
+                # Verify connection with multiple checks
+                if self.voice_client:
+                    print(f"🔍 Voice client created, verifying connection...")
                     
-                    # Check if we somehow already have a working connection before attempting
-                    if self.voice_client and hasattr(self.voice_client, 'is_connected') and self.voice_client.is_connected():
-                        print(f"✅ Connection already established")
-                        return
-                    
-                    # Use a longer timeout for hosted environments
-                    self.voice_client = await asyncio.wait_for(
-                        channel.connect(timeout=30.0, reconnect=True), 
-                        timeout=45.0
-                    )
-                    
-                    # Verify connection with multiple checks
-                    if self.voice_client:
-                        print(f"🔍 Voice client created, verifying connection...")
+                    # Give Discord time to fully establish the connection
+                    for check_attempt in range(5):  # Check up to 5 times
+                        await asyncio.sleep(1)  # Wait 1 second between checks
                         
-                        # Give Discord time to fully establish the connection
-                        for check_attempt in range(5):  # Check up to 5 times
-                            await asyncio.sleep(1)  # Wait 1 second between checks
-                            
-                            if hasattr(self.voice_client, 'is_connected') and self.voice_client.is_connected():
-                                print(f"✅ Successfully connected to voice channel: {channel.name}")
-                                return
-                            elif check_attempt < 4:  # Don't print on last attempt
-                                print(f"🔄 Connection check {check_attempt + 1}/5, waiting...")
-                        
-                        # If we get here, connection verification failed
-                        print(f"❌ Connection verification failed after 5 seconds")
-                        raise discord.errors.ClientException("Connection established but verification failed")
-                    else:
-                        raise discord.errors.ClientException("Failed to create voice client")
-                        
-                except (asyncio.TimeoutError, discord.errors.ConnectionClosed, discord.errors.ClientException) as e:
-                    print(f"⚠️ Voice connection attempt {attempt + 1} failed: {type(e).__name__}: {e}")
-                    
-                    # Check if we actually have a working connection despite the exception
-                    if self.voice_client and hasattr(self.voice_client, 'is_connected') and self.voice_client.is_connected():
-                        print(f"🔍 Exception occurred but connection appears to be working, verifying...")
-                        await asyncio.sleep(2)  # Give it more time
-                        if self.voice_client.is_connected():
-                            print(f"✅ Connection verified despite exception")
+                        if hasattr(self.voice_client, 'is_connected') and self.voice_client.is_connected():
+                            print(f"✅ Successfully connected to voice channel: {channel.name}")
                             return
+                        elif check_attempt < 4:  # Don't print on last attempt
+                            print(f"🔄 Connection check {check_attempt + 1}/5, waiting...")
                     
-                    # Clean up failed connection
-                    await self._safe_disconnect(force=True, full_cleanup=False)
+                    # If we get here, connection verification failed
+                    print(f"❌ Connection verification failed after 5 seconds")
+                    raise discord.errors.ClientException("Connection established but verification failed")
+                else:
+                    raise discord.errors.ClientException("Failed to create voice client")
                     
-                    if attempt == 0:  # Only attempt
-                        # Check if this is a hosting environment limitation
-                        if "4006" in str(e) or "Session no longer valid" in str(e):
-                            raise discord.errors.ClientException(
-                                "Voice connection failed due to hosting environment limitations. "
-                                "This bot may not support voice features on this hosting platform."
-                            )
-                        else:
-                            raise discord.errors.ClientException(f"Voice connection failed: {e}")
+            except (asyncio.TimeoutError, discord.errors.ConnectionClosed, discord.errors.ClientException) as e:
+                print(f"⚠️ Voice connection attempt {attempt + 1} failed: {type(e).__name__}: {e}")
+                
+                # Check if we actually have a working connection despite the exception
+                if self.voice_client and hasattr(self.voice_client, 'is_connected') and self.voice_client.is_connected():
+                    print(f"🔍 Exception occurred but connection appears to be working, verifying...")
+                    await asyncio.sleep(2)  # Give it more time
+                    if self.voice_client.is_connected():
+                        print(f"✅ Connection verified despite exception")
+                        return
+                
+                # Clean up failed connection
+                await self._safe_disconnect(force=True, full_cleanup=False)
+                
+                if attempt == 0:  # Only attempt
+                    # Check if this is a hosting environment limitation
+                    if "4006" in str(e) or "Session no longer valid" in str(e):
+                        raise discord.errors.ClientException(
+                            "Voice connection failed due to hosting environment limitations. "
+                            "This bot may not support voice features on this hosting platform."
+                        )
+                    else:
+                        raise discord.errors.ClientException(f"Voice connection failed: {e}")
                     
         except discord.errors.ClientException:
             raise  # Re-raise client exceptions as-is
