@@ -35,7 +35,7 @@ class PuddlesBot(discord.Client):
             await self.tree.sync(guild=None)  # None means global sync
             print("Commands synced successfully!")
             print("Available commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw, /quack")
-            print("Ticket system commands: /intmsg, /editintmsg, /listmessages, /ticketstats, /imw")
+            print("Ticket system commands: /intmsg, /editintmsg, /listmessages, /ticketstats, /imw, /fixdb")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
             print("Full error:", traceback.format_exc())
@@ -94,36 +94,97 @@ class PuddlesBot(discord.Client):
     async def load_persistent_views(self):
         """Load persistent views for interactive messages and tickets"""
         session = get_session()
+        restored_messages = 0
+        restored_tickets = 0
+        
         try:
             # Load interactive message views
+            print("Loading interactive message views...")
             interactive_messages = session.query(InteractiveMessage).all()
-            restored_messages = 0
             
             for msg_data in interactive_messages:
                 try:
                     # Get the channel and message
                     channel = self.get_channel(int(msg_data.channel_id))
                     if not channel:
+                        print(f"Channel {msg_data.channel_id} not found for message {msg_data.id}")
                         continue
                     
-                    message = await channel.fetch_message(int(msg_data.message_id))
-                    if not message:
+                    try:
+                        message = await channel.fetch_message(int(msg_data.message_id))
+                    except discord.NotFound:
+                        print(f"Message {msg_data.message_id} not found, may have been deleted")
+                        continue
+                    except discord.Forbidden:
+                        print(f"No permission to fetch message {msg_data.message_id}")
                         continue
                     
                     # Only add view if there are buttons
                     if msg_data.buttons:
                         view = InteractiveMessageView(msg_data)
-                        # Don't edit the message, just add the view for future interactions
-                        self.add_view(view, message_id=int(msg_data.message_id))
-                        restored_messages += 1
+                        
+                        # Actually edit the Discord message to attach the view
+                        try:
+                            # Get the current embed from the message
+                            current_embed = message.embeds[0] if message.embeds else None
+                            
+                            if current_embed:
+                                # Update the message with the view attached
+                                await message.edit(embed=current_embed, view=view)
+                                restored_messages += 1
+                                print(f"✅ Restored interactive message {msg_data.id} with {len(msg_data.buttons)} buttons")
+                            else:
+                                # If no embed, just add the view without editing
+                                await message.edit(view=view)
+                                restored_messages += 1
+                                print(f"✅ Restored interactive message {msg_data.id} with {len(msg_data.buttons)} buttons (no embed)")
+                                
+                        except discord.Forbidden:
+                            print(f"❌ No permission to edit message {msg_data.message_id}")
+                            # Fallback: just register the view
+                            self.add_view(view, message_id=int(msg_data.message_id))
+                        except discord.HTTPException as e:
+                            print(f"❌ HTTP error editing message {msg_data.message_id}: {e}")
+                            # Fallback: just register the view
+                            self.add_view(view, message_id=int(msg_data.message_id))
+                    else:
+                        print(f"Skipping message {msg_data.id} - no buttons")
                         
                 except Exception as e:
                     print(f"Error restoring interactive message {msg_data.id}: {e}")
                     continue
             
-            # Load ticket control views
-            open_tickets = session.query(Ticket).filter_by(status="open").all()
-            restored_tickets = 0
+        except Exception as e:
+            print(f"Error loading interactive messages: {e}")
+        
+        try:
+            # Load ticket control views (with database error handling)
+            print("Loading ticket control views...")
+            
+            # Try to load tickets, but handle missing column gracefully
+            try:
+                open_tickets = session.query(Ticket).filter_by(status="open").all()
+            except Exception as db_error:
+                if "no such column" in str(db_error).lower():
+                    print("⚠️  Database schema outdated - some features may not work until database is updated")
+                    print("💡 To fix: Delete data/tasks.db and restart the bot, or run the database migration")
+                    # Try to load tickets without the problematic columns
+                    try:
+                        open_tickets = session.execute(
+                            "SELECT id, ticket_id, channel_id, server_id, creator_id, button_id, status, created_at, closed_at, closed_by FROM tickets WHERE status = 'open'"
+                        ).fetchall()
+                        # Convert to ticket-like objects
+                        class TicketLike:
+                            def __init__(self, row):
+                                self.id = row[0]
+                                self.channel_id = str(row[2])
+                        open_tickets = [TicketLike(row) for row in open_tickets]
+                    except:
+                        print("❌ Cannot load tickets due to database issues")
+                        open_tickets = []
+                else:
+                    print(f"Database error loading tickets: {db_error}")
+                    open_tickets = []
             
             for ticket in open_tickets:
                 try:
@@ -135,14 +196,20 @@ class PuddlesBot(discord.Client):
                 except Exception as e:
                     print(f"Error restoring ticket view {ticket.id}: {e}")
                     continue
-            
-            print(f"Restored {restored_messages} interactive message views and {restored_tickets} ticket views")
-            
+                    
         except Exception as e:
-            print(f"Error loading persistent views: {e}")
-            print(traceback.format_exc())
+            print(f"Error loading ticket views: {e}")
+        
         finally:
             session.close()
+        
+        print(f"🎉 Persistence restoration complete!")
+        print(f"📊 Restored {restored_messages} interactive message views and {restored_tickets} ticket views")
+        
+        if restored_messages == 0:
+            print("ℹ️  No interactive messages found to restore")
+        if restored_tickets == 0:
+            print("ℹ️  No open tickets found to restore")
 
 client = PuddlesBot()
 
@@ -2093,8 +2160,88 @@ async def ticketstats(interaction: discord.Interaction):
     except Exception as e:
         print(f"Error in ticketstats command: {e}")
         await interaction.response.send_message("❌ An error occurred while fetching statistics.", ephemeral=True)
-    finally:
-        session.close()
+            finally:
+            session.close()
+
+@client.tree.command(
+    name="fixdb",
+    description="Fix database schema issues (Admin only)"
+)
+@checks.has_permissions(administrator=True)
+@log_command
+async def fixdb(interaction: discord.Interaction):
+    """Fix database schema by adding missing columns"""
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        # Import the database fix function
+        import sqlite3
+        import os
+        
+        db_path = os.path.join('data', 'tasks.db')
+        
+        if not os.path.exists(db_path):
+            await interaction.followup.send("❌ Database file not found!", ephemeral=True)
+            return
+        
+        fixed_items = []
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Add missing columns to tickets table
+        try:
+            cursor.execute("ALTER TABLE tickets ADD COLUMN questions_answers TEXT")
+            fixed_items.append("✅ Added questions_answers column to tickets table")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                fixed_items.append(f"⚠️ tickets.questions_answers: {e}")
+        
+        # Add missing columns to message_buttons table
+        try:
+            cursor.execute("ALTER TABLE message_buttons ADD COLUMN ticket_questions TEXT")
+            fixed_items.append("✅ Added ticket_questions column to message_buttons table")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                fixed_items.append(f"⚠️ message_buttons.ticket_questions: {e}")
+        
+        try:
+            cursor.execute("ALTER TABLE message_buttons ADD COLUMN ticket_visible_roles TEXT")
+            fixed_items.append("✅ Added ticket_visible_roles column to message_buttons table")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                fixed_items.append(f"⚠️ message_buttons.ticket_visible_roles: {e}")
+        
+        # Create intmsg_creators table if it doesn't exist
+        try:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS intmsg_creators (
+                    id INTEGER PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    server_id TEXT NOT NULL,
+                    added_by TEXT NOT NULL,
+                    added_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            fixed_items.append("✅ Created/verified intmsg_creators table")
+        except sqlite3.OperationalError as e:
+            fixed_items.append(f"⚠️ intmsg_creators table: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        # Reload persistent views after fixing database
+        await client.load_persistent_views()
+        
+        result_text = "🔧 **Database Fix Results:**\n\n" + "\n".join(fixed_items)
+        result_text += "\n\n🔄 **Persistent views reloaded!**\nAll interactive messages should now work after bot restarts."
+        
+        await interaction.followup.send(result_text, ephemeral=True)
+        
+    except Exception as e:
+        await interaction.followup.send(f"❌ Database fix failed: {str(e)}", ephemeral=True)
+        print(f"Database fix error: {e}")
+        print(traceback.format_exc())
 
 # ============= END TICKET SYSTEM COMMANDS =============
 
