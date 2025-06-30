@@ -501,13 +501,23 @@ class MusicPlayer:
                     logger.debug(f"[Guild {self.guild.id}] Connection parameters: timeout=30.0, reconnect=True, outer_timeout=45.0")
                     logger.debug(f"[Guild {self.guild.id}] Discord.py version: {discord.__version__}")
                     
-                    # Use a longer timeout for hosted environments
+                    # Use progressive timeouts for different environments
+                    hosting_env = detect_hosting_environment()
+                    if hosting_env != "unknown":
+                        connection_timeout = 60.0  # Extended timeout for hosted environments
+                        outer_timeout = 90.0
+                        logger.info(f"[Guild {self.guild.id}] Detected hosting environment '{hosting_env}', using extended timeouts")
+                    else:
+                        connection_timeout = 45.0  # Standard timeout for local/VPS
+                        outer_timeout = 60.0
+                    
                     logger.debug(f"[Guild {self.guild.id}] Calling channel.connect()...")
+                    logger.debug(f"[Guild {self.guild.id}] Using timeouts: inner={connection_timeout}s, outer={outer_timeout}s")
                     connection_start_time = datetime.now()
                     
                     self.voice_client = await asyncio.wait_for(
-                        channel.connect(timeout=30.0, reconnect=True), 
-                        timeout=45.0
+                        channel.connect(timeout=connection_timeout, reconnect=True), 
+                        timeout=outer_timeout
                     )
                     
                     connection_end_time = datetime.now()
@@ -551,9 +561,10 @@ class MusicPlayer:
                         raise discord.errors.ClientException("Failed to create voice client")
                         
                 except (asyncio.TimeoutError, discord.errors.ConnectionClosed, discord.errors.ClientException) as e:
-                    logger.error(f"[Guild {self.guild.id}] Voice connection attempt {attempt + 1} failed: {type(e).__name__}: {e}")
+                    connection_duration = (datetime.now() - connection_start_time).total_seconds()
+                    logger.error(f"[Guild {self.guild.id}] Voice connection attempt {attempt + 1} failed after {connection_duration:.2f}s: {type(e).__name__}: {e}")
                     logger.error(f"[Guild {self.guild.id}] Connection error traceback: {traceback.format_exc()}")
-                    print(f"⚠️ Voice connection attempt {attempt + 1} failed: {type(e).__name__}: {e}")
+                    print(f"⚠️ Voice connection attempt {attempt + 1} failed after {connection_duration:.2f}s: {type(e).__name__}: {e}")
                     
                     # Check if we actually have a working connection despite the exception
                     if self.voice_client and hasattr(self.voice_client, 'is_connected') and self.voice_client.is_connected():
@@ -572,18 +583,34 @@ class MusicPlayer:
                     await self._safe_disconnect(force=True, full_cleanup=False)
                     
                     if attempt == 0:  # Only attempt
-                        # Check if this is a hosting environment limitation
+                        # Detailed error analysis
                         error_str = str(e)
+                        error_type = type(e).__name__
                         logger.error(f"[Guild {self.guild.id}] Analyzing error: {error_str}")
                         
-                        if "4006" in error_str or "Session no longer valid" in error_str:
+                        if isinstance(e, asyncio.TimeoutError):
+                            logger.error(f"[Guild {self.guild.id}] Connection timeout detected after {connection_duration:.2f}s")
+                            raise discord.errors.ClientException(
+                                f"Voice connection timed out after {connection_duration:.1f} seconds. "
+                                f"This usually indicates network connectivity issues to Discord's voice servers. "
+                                f"Try using /networktest to diagnose network problems."
+                            )
+                        elif "4006" in error_str or "Session no longer valid" in error_str:
                             logger.error(f"[Guild {self.guild.id}] Detected hosting environment limitation (4006 error)")
                             raise discord.errors.ClientException(
                                 "Voice connection failed due to hosting environment limitations. "
-                                "This bot may not support voice features on this hosting platform."
+                                "This bot may not support voice features on this hosting platform. "
+                                "Use /networktest to check connectivity."
+                            )
+                        elif "Timed out connecting to voice" in error_str:
+                            logger.error(f"[Guild {self.guild.id}] Discord voice server timeout detected")
+                            raise discord.errors.ClientException(
+                                f"Timed out connecting to Discord's voice servers after {connection_duration:.1f} seconds. "
+                                f"This may be due to network restrictions or server issues. "
+                                f"Try /networktest to check connectivity."
                             )
                         else:
-                            logger.error(f"[Guild {self.guild.id}] Connection failed with non-4006 error")
+                            logger.error(f"[Guild {self.guild.id}] Connection failed with error: {error_type}")
                             raise discord.errors.ClientException(f"Voice connection failed: {e}")
                     
         except discord.errors.ClientException:
@@ -1690,6 +1717,145 @@ async def voicetest(interaction: discord.Interaction):
             ephemeral=True
         )
 
+@app_commands.command(name="networktest", description="Test network connectivity to Discord voice servers (Admin only)")
+@app_commands.default_permissions(administrator=True)
+@log_command
+async def networktest(interaction: discord.Interaction):
+    """Test network connectivity to Discord voice servers"""
+    await interaction.response.defer()
+    
+    import socket
+    import time
+    
+    try:
+        embed = discord.Embed(
+            title="🌐 Network Connectivity Test",
+            description="Testing network connectivity to Discord voice servers...",
+            color=discord.Color.blue()
+        )
+        
+        test_results = []
+        
+        # Test 1: Basic Discord API connectivity
+        try:
+            start_time = time.time()
+            # Test if we can reach Discord's API
+            test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            test_socket.settimeout(10)
+            result = test_socket.connect_ex(("discord.com", 443))
+            test_socket.close()
+            duration = (time.time() - start_time) * 1000
+            
+            if result == 0:
+                test_results.append(f"✅ **Discord API:** Connected in {duration:.0f}ms")
+            else:
+                test_results.append(f"❌ **Discord API:** Connection failed (error {result})")
+                
+        except Exception as e:
+            test_results.append(f"❌ **Discord API:** Connection error - {str(e)}")
+        
+        # Test 2: Voice server regions
+        voice_regions = [
+            ("us-east", "162.159.130.233"),
+            ("us-west", "162.159.135.233"),
+            ("europe", "162.159.138.233"),
+            ("asia", "162.159.139.233")
+        ]
+        
+        successful_regions = 0
+        for region_name, ip in voice_regions:
+            try:
+                start_time = time.time()
+                test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                test_socket.settimeout(5)
+                result = test_socket.connect_ex((ip, 443))
+                test_socket.close()
+                duration = (time.time() - start_time) * 1000
+                
+                if result == 0:
+                    test_results.append(f"✅ **{region_name.title()}:** Connected in {duration:.0f}ms")
+                    successful_regions += 1
+                else:
+                    test_results.append(f"❌ **{region_name.title()}:** Connection failed")
+                    
+            except Exception as e:
+                test_results.append(f"❌ **{region_name.title()}:** Error - {str(e)}")
+        
+        # Test 3: UDP connectivity (voice uses UDP)
+        try:
+            udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            udp_socket.settimeout(5)
+            udp_socket.sendto(b"test", ("8.8.8.8", 53))  # DNS server
+            udp_socket.close()
+            test_results.append("✅ **UDP:** UDP connectivity available")
+        except Exception as e:
+            test_results.append(f"❌ **UDP:** UDP connectivity failed - {str(e)}")
+        
+        # Test 4: Hosting environment detection
+        hosting_env = detect_hosting_environment()
+        if hosting_env != "unknown":
+            test_results.append(f"ℹ️ **Hosting:** Detected {hosting_env} environment")
+            
+            # Known problematic environments
+            problematic = ["replit", "heroku", "railway", "glitch", "github_codespaces"]
+            if hosting_env in problematic:
+                test_results.append(f"⚠️ **Warning:** {hosting_env} typically blocks voice connections")
+        else:
+            test_results.append("ℹ️ **Hosting:** Unknown/local environment")
+        
+        # Compile results
+        embed.description = "**Network Connectivity Test Results:**\n\n" + "\n".join(test_results)
+        
+        # Overall assessment
+        if successful_regions == 0:
+            embed.color = discord.Color.red()
+            embed.add_field(
+                name="🔴 Assessment",
+                value="**Network connectivity issues detected!**\n"
+                      "Voice connections will likely fail due to network restrictions.",
+                inline=False
+            )
+        elif successful_regions < 2:
+            embed.color = discord.Color.orange()
+            embed.add_field(
+                name="🟡 Assessment", 
+                value="**Limited connectivity detected.**\n"
+                      "Voice connections may be unstable or slow.",
+                inline=False
+            )
+        else:
+            embed.color = discord.Color.green()
+            embed.add_field(
+                name="🟢 Assessment",
+                value="**Good network connectivity!**\n"
+                      "Voice connections should work properly.",
+                inline=False
+            )
+        
+        # Add recommendations
+        recommendations = []
+        if hosting_env in ["replit", "heroku", "railway", "glitch", "github_codespaces"]:
+            recommendations.append("• Consider using a VPS (DigitalOcean, Vultr, etc.)")
+            recommendations.append("• Try a different hosting platform")
+        elif successful_regions == 0:
+            recommendations.append("• Check firewall settings")
+            recommendations.append("• Verify UDP ports 50000-65535 are open")
+            recommendations.append("• Contact hosting provider about voice restrictions")
+        
+        if recommendations:
+            embed.add_field(
+                name="💡 Recommendations",
+                value="\n".join(recommendations),
+                inline=False
+            )
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        logger.error(f"Network test error: {e}")
+        logger.error(f"Network test traceback: {traceback.format_exc()}")
+        await interaction.followup.send(f"❌ Network test failed: {str(e)}", ephemeral=True)
+
 def setup_music_commands(tree):
     """Add music commands to the command tree"""
     tree.add_command(play)
@@ -1709,7 +1875,8 @@ def setup_music_commands(tree):
     tree.add_command(musicstatus)
     tree.add_command(musicdebug)
     tree.add_command(voicetest)
-    print("🎵 Music commands loaded: /play, /pause, /resume, /skip, /stop, /queue, /nowplaying, /volume, /loop, /shuffle, /remove, /clear, /leave, /search, /musicstatus, /musicdebug, /voicetest")
+    tree.add_command(networktest)
+    print("🎵 Music commands loaded: /play, /pause, /resume, /skip, /stop, /queue, /nowplaying, /volume, /loop, /shuffle, /remove, /clear, /leave, /search, /musicstatus, /musicdebug, /voicetest, /networktest")
 
 # Cleanup function
 async def cleanup_music_players():

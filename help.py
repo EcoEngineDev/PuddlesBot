@@ -119,7 +119,8 @@ async def help_command(interaction: discord.Interaction):
             "`/leave` - Disconnect from voice channel\n"
             "`/search <query>` - Search for songs without playing\n"
             "`/musicstatus` - **[Admin]** Check music system status and diagnostics\n"
-            "`/voicetest` - **[Admin]** Test voice connection capability"
+            "`/voicetest` - **[Admin]** Test voice connection capability\n"
+            "`/networktest` - **[Admin]** Test network connectivity to Discord voice servers"
         ),
         inline=False
     )
