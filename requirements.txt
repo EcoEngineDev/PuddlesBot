@@ -1,4 +1,6 @@
-discord.py==2.3.2
+# Using specific commit that fixes voice connection error 4006
+# PR: https://github.com/Rapptz/discord.py/pull/10210
+git+https://github.com/Rapptz/discord.py.git@2175bd5
 flask==3.0.2
 requests==2.31.0
 SQLAlchemy==2.0.27
