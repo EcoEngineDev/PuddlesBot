@@ -2160,8 +2160,8 @@ async def ticketstats(interaction: discord.Interaction):
     except Exception as e:
         print(f"Error in ticketstats command: {e}")
         await interaction.response.send_message("❌ An error occurred while fetching statistics.", ephemeral=True)
-            finally:
-            session.close()
+    finally:
+        session.close()
 
 @client.tree.command(
     name="fixdb",
