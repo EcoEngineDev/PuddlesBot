@@ -121,32 +121,36 @@ class PuddlesBot(discord.Client):
                     
                     # Only add view if there are buttons
                     if msg_data.buttons:
-                        view = InteractiveMessageView(msg_data)
-                        
-                        # Actually edit the Discord message to attach the view
+                        # Use the exact same logic as the Update & Refresh button
                         try:
-                            # Get the current embed from the message
-                            current_embed = message.embeds[0] if message.embeds else None
+                            # Create new embed with message ID and larger title (same as Update & Refresh)
+                            color = discord.Color(int(msg_data.color, 16))
                             
-                            if current_embed:
-                                # Update the message with the view attached
-                                await message.edit(embed=current_embed, view=view)
-                                restored_messages += 1
-                                print(f"✅ Restored interactive message {msg_data.id} with {len(msg_data.buttons)} buttons")
+                            # Build description with larger title and message ID
+                            description_text = msg_data.description if msg_data.description else ""
+                            if description_text:
+                                updated_description = f"# {msg_data.title}\n\n{description_text}\n\n-# Message ID: {msg_data.message_id}"
                             else:
-                                # If no embed, just add the view without editing
-                                await message.edit(view=view)
-                                restored_messages += 1
-                                print(f"✅ Restored interactive message {msg_data.id} with {len(msg_data.buttons)} buttons (no embed)")
+                                updated_description = f"# {msg_data.title}\n\n-# Message ID: {msg_data.message_id}"
+                            
+                            embed = discord.Embed(
+                                description=updated_description,
+                                color=color
+                            )
+                            
+                            # Create view with buttons (same as Update & Refresh)
+                            view = InteractiveMessageView(msg_data)
+                            await message.edit(embed=embed, view=view)
+                            
+                            restored_messages += 1
+                            print(f"✅ Restored interactive message {msg_data.id} with {len(msg_data.buttons)} buttons")
                                 
                         except discord.Forbidden:
                             print(f"❌ No permission to edit message {msg_data.message_id}")
-                            # Fallback: just register the view
-                            self.add_view(view, message_id=int(msg_data.message_id))
                         except discord.HTTPException as e:
                             print(f"❌ HTTP error editing message {msg_data.message_id}: {e}")
-                            # Fallback: just register the view
-                            self.add_view(view, message_id=int(msg_data.message_id))
+                        except Exception as e:
+                            print(f"❌ Error processing message {msg_data.message_id}: {e}")
                     else:
                         print(f"Skipping message {msg_data.id} - no buttons")
                         
