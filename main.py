@@ -18,6 +18,8 @@ import sqlalchemy
 # Import the modular systems
 import dice
 import intmsg
+import fun
+import help
 from ticket_system import (
     InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal, TicketControlView
@@ -41,16 +43,22 @@ class PuddlesBot(discord.Client):
             # Setup module systems with client references
             dice.setup_dice_system(self)
             intmsg.setup_intmsg_system(self)
+            fun.setup_fun_system(self)
+            help.setup_help_system(self)
             
             # Register commands from modules
             dice.setup_dice_commands(self.tree)
             intmsg.setup_intmsg_commands(self.tree)
+            fun.setup_fun_commands(self.tree)
+            help.setup_help_commands(self.tree)
             
             print("Syncing commands...")
             await self.tree.sync(guild=None)  # None means global sync
             print("Commands synced successfully!")
-            print("Available commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw, /quack, /diceroll, /help")
+            print("Core commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw")
             print("Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
+            print("Fun commands: /quack, /diceroll")
+            print("Utility commands: /help")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
             print("Full error:", traceback.format_exc())
@@ -1178,36 +1186,7 @@ async def showtasks(interaction: discord.Interaction, target_user: discord.Membe
     finally:
         session.close()
 
-@client.tree.command(
-    name="quack",
-    description="Get a random duck image! 🦆"
-)
-@log_command
-async def quack(interaction: discord.Interaction):
-    try:
-        # Get a random duck image from random-d.uk API
-        response = requests.get('https://random-d.uk/api/v2/random')
-        if response.status_code == 200:
-            data = response.json()
-            embed = discord.Embed(
-                title="Quack! 🦆",
-                color=discord.Color.yellow()
-            )
-            embed.set_image(url=data['url'])
-            embed.set_footer(text="Powered by random-d.uk")
-            await interaction.response.send_message(embed=embed)
-        else:
-            await interaction.response.send_message(
-                "Sorry, I couldn't fetch a duck image right now. Try again later!",
-                ephemeral=True
-            )
-    except Exception as e:
-        print(f"Error in quack command: {str(e)}")
-        print(traceback.format_exc())
-        await interaction.response.send_message(
-            "An error occurred while fetching the duck image. Please try again later.",
-            ephemeral=True
-        )
+# /quack command is now in fun.py
 
 class PaginatedTaskView(discord.ui.View):
     def __init__(self, tasks, tasks_per_page=5):
@@ -1371,96 +1350,7 @@ async def on_message(message):
 
 
 
-@client.tree.command(
-    name="help",
-    description="Show all available commands and their descriptions"
-)
-@log_command
-async def help_command(interaction: discord.Interaction):
-    """Display comprehensive help information"""
-    
-    embed = discord.Embed(
-        title="🤖 Puddles Bot - Command Help",
-        description="Here are all the available commands and how to use them:",
-        color=discord.Color.blue()
-    )
-    
-    # Task Management Commands
-    embed.add_field(
-        name="📋 **Task Management**",
-        value=(
-            "`/task` - Create a new task with name, assignee, due date, and description\n"
-            "`/mytasks` - View all tasks assigned to you\n"
-            "`/taskedit` - Edit your existing tasks (name, due date, description, assignee)\n"
-            "`/showtasks @user` - View tasks assigned to a specific user\n"
-            "`/alltasks` - **[Admin]** View all active tasks in the server (paginated)\n"
-            "`/tcw @user add/remove` - **[Admin]** Manage task creator whitelist"
-        ),
-        inline=False
-    )
-    
-    # Interactive Message & Ticket System
-    embed.add_field(
-        name="🎫 **Interactive Messages & Tickets**",
-        value=(
-            "`/intmsg` - Create interactive messages with ticket/role buttons\n"
-            "`/editintmsg [message_id]` - **[Staff]** Edit existing interactive messages\n"
-            "`/listmessages` - **[Staff]** List all interactive messages in the server\n"
-            "`/ticketstats` - **[Staff]** View ticket statistics and recent activity\n"
-            "`/imw @user add/remove` - **[Admin]** Manage interactive message creator whitelist"
-        ),
-        inline=False
-    )
-    
-    # Fun & Utility Commands
-    embed.add_field(
-        name="🎮 **Fun & Utility**",
-        value=(
-            "`/quack` - Get a random duck image 🦆\n"
-            "`/diceroll [1-100]` - Roll dice and see visual results with statistics\n"
-            "`/help` - Show this help message"
-        ),
-        inline=False
-    )
-    
-    # Admin & System Commands
-    embed.add_field(
-        name="🔧 **Admin & System**",
-        value=(
-            "`/fixdb` - **[Admin]** Fix database schema issues\n"
-            "`/testpersistence` - **[Admin]** Test the persistence system"
-        ),
-        inline=False
-    )
-    
-    # Permission Legend
-    embed.add_field(
-        name="🔑 **Permission Legend**",
-        value=(
-            "**[Admin]** - Requires Administrator permission\n"
-            "**[Staff]** - Requires Manage Messages permission\n"
-            "No tag - Available to all users (some may require whitelist)"
-        ),
-        inline=False
-    )
-    
-    # Additional Info
-    embed.add_field(
-        name="💡 **Special Features**",
-        value=(
-            "• **Persistent Views** - Buttons work even after bot restarts\n"
-            "• **Task Notifications** - Get DMs when tasks are due soon\n"
-            "• **Ticket System** - Create support tickets with custom questions\n"
-            "• **Role Management** - Assign/remove roles with buttons\n"
-            "• **Pagination** - Large lists are split into easy-to-read pages\n"
-            "• **Ping Support** - Use @everyone/@here in interactive messages"
-        ),
-        inline=False
-    )
-    
-    embed.set_footer(text="For detailed help with any command, try using it and see the prompts!")
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+# /help command is now in help.py
 
 # ============= END TICKET SYSTEM COMMANDS =============
 
