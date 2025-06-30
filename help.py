@@ -118,7 +118,8 @@ async def help_command(interaction: discord.Interaction):
             "`/clear` - Clear entire queue\n"
             "`/leave` - Disconnect from voice channel\n"
             "`/search <query>` - Search for songs without playing\n"
-            "`/musicstatus` - **[Admin]** Check music system status and diagnostics"
+            "`/musicstatus` - **[Admin]** Check music system status and diagnostics\n"
+            "`/voicetest` - **[Admin]** Test voice connection capability"
         ),
         inline=False
     )

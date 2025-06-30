@@ -35,10 +35,61 @@ if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
     except Exception as e:
         print(f"Failed to initialize Spotify client: {e}")
 
+def detect_hosting_environment():
+    """Detect what kind of hosting environment we're running in"""
+    indicators = []
+    
+    # Check for common hosting environment indicators
+    try:
+        import os
+        
+        # Replit
+        if os.environ.get('REPL_ID') or os.environ.get('REPLIT_DB_URL'):
+            indicators.append("Replit")
+        
+        # Heroku  
+        if os.environ.get('DYNO') or os.environ.get('HEROKU_APP_NAME'):
+            indicators.append("Heroku")
+            
+        # Railway
+        if os.environ.get('RAILWAY_ENVIRONMENT'):
+            indicators.append("Railway")
+            
+        # Glitch
+        if os.environ.get('PROJECT_DOMAIN') and 'glitch' in os.environ.get('PROJECT_DOMAIN', ''):
+            indicators.append("Glitch")
+            
+        # GitHub Codespaces
+        if os.environ.get('CODESPACES'):
+            indicators.append("GitHub Codespaces")
+            
+        # Check for container environment
+        if os.path.exists('/.dockerenv') or os.environ.get('DOCKER_CONTAINER'):
+            indicators.append("Docker Container")
+            
+        # Check if we're in a restricted environment
+        if not os.access('/usr', os.W_OK):
+            indicators.append("Restricted Environment")
+            
+        return indicators if indicators else ["Unknown/Local"]
+        
+    except Exception:
+        return ["Detection Failed"]
+
 def setup_music_system(client):
     """Initialize the music system with client reference"""
     global _client
     _client = client
+    
+    # Detect hosting environment
+    env_info = detect_hosting_environment()
+    print(f"🏠 Detected hosting environment: {', '.join(env_info)}")
+    
+    # Warn about known problematic environments
+    problematic = ["Replit", "Heroku", "Railway", "Glitch", "GitHub Codespaces"]
+    if any(env in env_info for env in problematic):
+        print(f"⚠️ WARNING: {', '.join(env_info)} may not support Discord voice connections")
+        print("🔧 Voice features may be limited or non-functional")
     
     # Test FFmpeg availability
     try:
@@ -138,29 +189,88 @@ class MusicPlayer:
         self.auto_leave_task = None
         
     async def connect(self, channel: discord.VoiceChannel):
-        """Connect to a voice channel with retry logic"""
+        """Connect to a voice channel with enhanced retry logic and permission checking"""
+        # Check bot permissions first
+        permissions = channel.permissions_for(channel.guild.me)
+        if not permissions.connect:
+            raise discord.errors.ClientException("Bot lacks 'Connect' permission for this voice channel")
+        if not permissions.speak:
+            raise discord.errors.ClientException("Bot lacks 'Speak' permission for this voice channel")
+        
+        # Clean up any existing failed connection
+        if self.voice_client and not self.voice_client.is_connected():
+            try:
+                await self.voice_client.disconnect(force=True)
+            except:
+                pass
+            self.voice_client = None
+            
         try:
             if self.voice_client and self.voice_client.is_connected():
                 if self.voice_client.channel != channel:
+                    print(f"🔄 Moving to voice channel: {channel.name}")
                     await self.voice_client.move_to(channel)
-            else:
-                # Try to connect with timeout and retry logic
-                for attempt in range(3):
-                    try:
-                        self.voice_client = await asyncio.wait_for(
-                            channel.connect(timeout=10.0), 
-                            timeout=15.0
-                        )
-                        print(f"✅ Connected to voice channel: {channel.name}")
-                        break
-                    except (asyncio.TimeoutError, discord.errors.ClientException) as e:
-                        print(f"⚠️ Voice connection attempt {attempt + 1} failed: {e}")
-                        if attempt == 2:  # Last attempt
-                            raise discord.errors.ClientException(f"Failed to connect to voice after 3 attempts: {e}")
-                        await asyncio.sleep(2)  # Wait before retry
+                    return
+                else:
+                    print(f"✅ Already connected to voice channel: {channel.name}")
+                    return
+            
+            # Enhanced connection strategy for hosted environments
+            print(f"🔗 Attempting to connect to voice channel: {channel.name}")
+            
+            # Strategy 1: Direct connection with longer timeout
+            for attempt in range(2):
+                try:
+                    print(f"📡 Voice connection attempt {attempt + 1}/2...")
+                    
+                    # Use a longer timeout for hosted environments
+                    self.voice_client = await asyncio.wait_for(
+                        channel.connect(timeout=30.0, reconnect=True), 
+                        timeout=45.0
+                    )
+                    
+                    # Verify connection is actually working
+                    if self.voice_client and self.voice_client.is_connected():
+                        print(f"✅ Successfully connected to voice channel: {channel.name}")
+                        # Small delay to ensure connection is stable
+                        await asyncio.sleep(1)
+                        return
+                    else:
+                        raise discord.errors.ClientException("Connection established but not properly connected")
+                        
+                except (asyncio.TimeoutError, discord.errors.ConnectionClosed) as e:
+                    print(f"⚠️ Voice connection attempt {attempt + 1} failed: {type(e).__name__}: {e}")
+                    if self.voice_client:
+                        try:
+                            await self.voice_client.disconnect(force=True)
+                        except:
+                            pass
+                        self.voice_client = None
+                    
+                    if attempt == 1:  # Last attempt
+                        # Check if this is a hosting environment limitation
+                        if "4006" in str(e) or "Session no longer valid" in str(e):
+                            raise discord.errors.ClientException(
+                                "Voice connection failed due to hosting environment limitations. "
+                                "This bot may not support voice features on this hosting platform."
+                            )
+                        else:
+                            raise discord.errors.ClientException(f"Voice connection failed after multiple attempts: {e}")
+                    
+                    # Wait longer between attempts for hosted environments
+                    await asyncio.sleep(5)
+                    
+        except discord.errors.ClientException:
+            raise  # Re-raise client exceptions as-is
         except Exception as e:
-            print(f"❌ Voice connection error: {e}")
-            raise
+            print(f"❌ Unexpected voice connection error: {e}")
+            if self.voice_client:
+                try:
+                    await self.voice_client.disconnect(force=True)
+                except:
+                    pass
+                self.voice_client = None
+            raise discord.errors.ClientException(f"Voice connection failed: {str(e)}")
             
     async def disconnect(self):
         """Disconnect from voice channel"""
@@ -414,20 +524,54 @@ async def play(interaction: discord.Interaction, query: str):
         try:
             await player.connect(voice_channel)
         except discord.errors.ClientException as e:
-            await interaction.followup.send(
-                f"❌ **Failed to connect to voice channel!**\n\n"
-                f"This might be due to:\n"
-                f"• Bot missing voice permissions\n"
-                f"• Voice channel is full\n"
-                f"• Network connectivity issues\n"
-                f"• Server hosting limitations\n\n"
-                f"Error: {str(e)}", 
-                ephemeral=True
-            )
-            return
+            # Check if this is a hosting environment limitation
+            if "hosting environment limitations" in str(e) or "4006" in str(e):
+                embed = discord.Embed(
+                    title="🚫 Voice Features Not Available",
+                    description=(
+                        "**Music playback is not supported on this hosting platform.**\n\n"
+                        "This is due to limitations with the current hosting environment that prevent "
+                        "Discord voice connections from working properly.\n\n"
+                        "**Alternative options:**\n"
+                        "• Host the bot on a VPS or dedicated server\n"
+                        "• Use a hosting service that supports Discord voice\n"
+                        "• Consider using a different music bot for voice features\n\n"
+                        "All other bot features (tasks, tickets, invites, etc.) work normally."
+                    ),
+                    color=discord.Color.red()
+                )
+                embed.set_footer(text="Error Code: Voice Connection Failed (4006)")
+                await interaction.followup.send(embed=embed)
+                return
+            else:
+                embed = discord.Embed(
+                    title="❌ Voice Connection Failed",
+                    description=(
+                        f"**Failed to connect to voice channel: {voice_channel.name}**\n\n"
+                        f"**Possible causes:**\n"
+                        f"• Bot missing voice permissions (Connect/Speak)\n"
+                        f"• Voice channel is full or restricted\n"
+                        f"• Temporary Discord voice server issues\n"
+                        f"• Network connectivity problems\n\n"
+                        f"**Error:** {str(e)}"
+                    ),
+                    color=discord.Color.red()
+                )
+                embed.add_field(
+                    name="💡 What to try:",
+                    value=(
+                        "• Check bot permissions in voice channel\n"
+                        "• Try a different voice channel\n" 
+                        "• Wait a few minutes and try again\n"
+                        "• Use `/musicstatus` to check system health"
+                    ),
+                    inline=False
+                )
+                await interaction.followup.send(embed=embed)
+                return
         except Exception as e:
             await interaction.followup.send(
-                f"❌ **Voice connection error!**\n"
+                f"❌ **Unexpected voice connection error!**\n"
                 f"Please try again or contact an administrator.\n\n"
                 f"Error: {str(e)}", 
                 ephemeral=True
@@ -933,7 +1077,117 @@ async def musicstatus(interaction: discord.Interaction):
     spotify_status = "✅ Configured" if spotify else "❌ Not configured"
     embed.add_field(name="Spotify Integration", value=spotify_status, inline=True)
     
+    # Hosting environment
+    env_info = detect_hosting_environment()
+    env_status = f"🏠 {', '.join(env_info)}"
+    problematic = ["Replit", "Heroku", "Railway", "Glitch", "GitHub Codespaces"]
+    if any(env in env_info for env in problematic):
+        env_status += "\n⚠️ May not support voice"
+    embed.add_field(name="Hosting Environment", value=env_status, inline=False)
+    
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@app_commands.command(name="voicetest", description="Test voice connection capability (Admin only)")
+@app_commands.default_permissions(administrator=True)
+@log_command
+async def voicetest(interaction: discord.Interaction):
+    """Test voice connection capability without playing music"""
+    if not interaction.user.voice:
+        await interaction.response.send_message(
+            "❌ You need to be in a voice channel to test voice connectivity!",
+            ephemeral=True
+        )
+        return
+        
+    await interaction.response.defer()
+    
+    try:
+        voice_channel = interaction.user.voice.channel
+        player = get_player(interaction.guild)
+        
+        embed = discord.Embed(
+            title="🧪 Voice Connection Test",
+            description=f"Testing connection to **{voice_channel.name}**...",
+            color=discord.Color.blue()
+        )
+        
+        test_results = []
+        
+        # Test 1: Permission check
+        permissions = voice_channel.permissions_for(voice_channel.guild.me)
+        if permissions.connect and permissions.speak:
+            test_results.append("✅ **Permissions:** Connect & Speak permissions available")
+        else:
+            missing = []
+            if not permissions.connect:
+                missing.append("Connect")
+            if not permissions.speak:
+                missing.append("Speak")
+            test_results.append(f"❌ **Permissions:** Missing {', '.join(missing)} permission(s)")
+        
+        # Test 2: Voice connection attempt
+        try:
+            test_results.append("🔄 **Connection Test:** Attempting to connect...")
+            
+            # Clean up any existing connection
+            if player.voice_client:
+                await player.disconnect()
+            
+            # Try to connect
+            await player.connect(voice_channel)
+            
+            if player.voice_client and player.voice_client.is_connected():
+                test_results.append("✅ **Connection Test:** Successfully connected!")
+                
+                # Test 3: Check connection stability
+                await asyncio.sleep(2)
+                if player.voice_client.is_connected():
+                    test_results.append("✅ **Stability Test:** Connection remained stable")
+                else:
+                    test_results.append("❌ **Stability Test:** Connection dropped after 2 seconds")
+                
+                # Clean up
+                await player.disconnect()
+                test_results.append("🧹 **Cleanup:** Disconnected successfully")
+            else:
+                test_results.append("❌ **Connection Test:** Failed to establish connection")
+                
+        except discord.errors.ClientException as e:
+            if "hosting environment limitations" in str(e):
+                test_results.append("❌ **Connection Test:** Hosting environment does not support voice")
+                test_results.append("ℹ️ **Diagnosis:** This hosting platform blocks Discord voice connections")
+            else:
+                test_results.append(f"❌ **Connection Test:** {str(e)}")
+                
+        except Exception as e:
+            test_results.append(f"❌ **Connection Test:** Unexpected error - {str(e)}")
+        
+        # Update embed with results
+        embed.description = f"**Voice Connection Test Results for {voice_channel.name}:**\n\n" + "\n".join(test_results)
+        
+        # Determine overall status
+        if any("❌" in result for result in test_results):
+            embed.color = discord.Color.red()
+            embed.add_field(
+                name="🔧 Recommendation",
+                value="Voice features may not work properly. Check the failed tests above.",
+                inline=False
+            )
+        else:
+            embed.color = discord.Color.green()
+            embed.add_field(
+                name="🎉 Result",
+                value="Voice connection should work normally! Try `/play <song>` now.",
+                inline=False
+            )
+            
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Voice test failed with unexpected error: {str(e)}",
+            ephemeral=True
+        )
 
 def setup_music_commands(tree):
     """Add music commands to the command tree"""
@@ -952,7 +1206,8 @@ def setup_music_commands(tree):
     tree.add_command(leave)
     tree.add_command(search)
     tree.add_command(musicstatus)
-    print("🎵 Music commands loaded: /play, /pause, /resume, /skip, /stop, /queue, /nowplaying, /volume, /loop, /shuffle, /remove, /clear, /leave, /search, /musicstatus")
+    tree.add_command(voicetest)
+    print("🎵 Music commands loaded: /play, /pause, /resume, /skip, /stop, /queue, /nowplaying, /volume, /loop, /shuffle, /remove, /clear, /leave, /search, /musicstatus, /voicetest")
 
 # Cleanup function
 async def cleanup_music_players():

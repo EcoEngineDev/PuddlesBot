@@ -63,7 +63,7 @@ class PuddlesBot(discord.Client):
             print("Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
             print("Fun commands: /quack, /diceroll")
             print("Invite tracking commands: /resetinvites, /editinvites, /invw, /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
-            print("Music commands: /play, /pause, /resume, /skip, /stop, /queue, /nowplaying, /volume, /loop, /shuffle, /remove, /clear, /leave, /search, /musicstatus")
+            print("Music commands: /play, /pause, /resume, /skip, /stop, /queue, /nowplaying, /volume, /loop, /shuffle, /remove, /clear, /leave, /search, /musicstatus, /voicetest")
             print("Utility commands: /help")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
