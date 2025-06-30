@@ -104,53 +104,80 @@ class PuddlesBot(discord.Client):
             # STEP 1: Clean up deleted messages from database
             print("🧹 Cleaning up deleted messages...")
             interactive_messages = session.query(InteractiveMessage).all()
+            print(f"📋 Found {len(interactive_messages)} interactive messages in database")
             
             for msg_data in interactive_messages:
+                print(f"\n🔍 Checking message {msg_data.id}:")
+                print(f"   Discord Message ID: {msg_data.message_id}")
+                print(f"   Channel ID: {msg_data.channel_id}")
+                print(f"   Title: {msg_data.title}")
+                print(f"   Buttons: {len(msg_data.buttons)}")
+                
                 try:
                     channel = self.get_channel(int(msg_data.channel_id))
                     if not channel:
-                        print(f"❌ Channel {msg_data.channel_id} not found, removing message {msg_data.id} from database")
+                        print(f"   ❌ Channel {msg_data.channel_id} not found, removing message {msg_data.id} from database")
                         session.delete(msg_data)
                         cleaned_messages += 1
                         continue
                     
+                    print(f"   ✅ Channel found: #{channel.name}")
+                    
                     try:
                         message = await channel.fetch_message(int(msg_data.message_id))
+                        print(f"   ✅ Discord message found and accessible")
                     except discord.NotFound:
-                        print(f"❌ Message {msg_data.message_id} not found, removing from database")
+                        print(f"   ❌ Discord message {msg_data.message_id} not found, removing from database")
                         session.delete(msg_data)
                         cleaned_messages += 1
                         continue
                     except discord.Forbidden:
-                        print(f"⚠️ No permission to fetch message {msg_data.message_id}, skipping")
+                        print(f"   ⚠️ No permission to fetch message {msg_data.message_id}, skipping")
                         continue
                     
                 except Exception as e:
-                    print(f"❌ Error checking message {msg_data.id}: {e}")
+                    print(f"   ❌ Error checking message {msg_data.id}: {e}")
                     continue
             
             # Commit cleanup changes
             if cleaned_messages > 0:
                 session.commit()
-                print(f"🗑️ Cleaned up {cleaned_messages} deleted messages from database")
+                print(f"\n🗑️ Cleaned up {cleaned_messages} deleted messages from database")
             
             # STEP 2: Register views with bot (this is crucial for persistent views)
-            print("📋 Registering interactive message views with bot...")
+            print(f"\n📋 Registering interactive message views with bot...")
             remaining_messages = session.query(InteractiveMessage).all()
+            print(f"📊 {len(remaining_messages)} messages remaining after cleanup")
             
             for msg_data in remaining_messages:
+                print(f"\n🔧 Processing message {msg_data.id}:")
+                print(f"   Discord Message ID: {msg_data.message_id}")
+                print(f"   Channel ID: {msg_data.channel_id}")
+                print(f"   Title: {msg_data.title}")
+                print(f"   Button count: {len(msg_data.buttons)}")
+                
                 try:
                     if msg_data.buttons:
+                        print(f"   📝 Button details:")
+                        for i, button in enumerate(msg_data.buttons):
+                            print(f"      {i+1}. {button.button_type.upper()}: '{button.label}' (ID: {button.id})")
+                        
                         # Create view and register it with the bot
+                        print(f"   🔄 Creating InteractiveMessageView...")
                         view = InteractiveMessageView(msg_data)
+                        
+                        print(f"   🔗 Registering view with bot...")
                         self.add_view(view)  # This is the key step!
+                        
                         restored_messages += 1
-                        print(f"✅ Registered view for message {msg_data.id} (Message ID: {msg_data.message_id}) with {len(msg_data.buttons)} buttons")
+                        print(f"   ✅ Successfully registered view for message {msg_data.message_id}")
                     else:
-                        print(f"⏭️ Skipping message {msg_data.id} - no buttons")
+                        print(f"   ⏭️ No buttons found, skipping")
                         
                 except Exception as e:
-                    print(f"❌ Error registering view for message {msg_data.id}: {e}")
+                    print(f"   ❌ Error registering view for message {msg_data.id}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
             
         except Exception as e:
@@ -229,26 +256,41 @@ class PuddlesBot(discord.Client):
         try:
             print("🔄 Auto-refreshing interactive messages...")
             interactive_messages = session.query(InteractiveMessage).all()
+            print(f"🔍 Found {len(interactive_messages)} messages to potentially refresh")
             
             for msg_data in interactive_messages:
+                print(f"\n🔄 Refreshing message {msg_data.id}:")
+                print(f"   Discord Message ID: {msg_data.message_id}")
+                print(f"   Channel ID: {msg_data.channel_id}")
+                print(f"   Title: {msg_data.title}")
+                
                 try:
                     if not msg_data.buttons:
+                        print(f"   ⏭️ No buttons, skipping refresh")
                         continue
                         
                     channel = self.get_channel(int(msg_data.channel_id))
                     if not channel:
+                        print(f"   ❌ Channel not found")
                         continue
+                    
+                    print(f"   ✅ Channel found: #{channel.name}")
                     
                     try:
                         message = await channel.fetch_message(int(msg_data.message_id))
-                    except (discord.NotFound, discord.Forbidden):
+                        print(f"   ✅ Discord message fetched successfully")
+                    except (discord.NotFound, discord.Forbidden) as e:
+                        print(f"   ❌ Cannot access message: {e}")
                         continue
                     
                     # Create embed with proper format (same as Update & Refresh)
+                    print(f"   🎨 Creating new embed...")
                     try:
                         color = discord.Color(int(msg_data.color, 16))
+                        print(f"   🎨 Using color: {msg_data.color}")
                     except:
                         color = discord.Color.blurple()
+                        print(f"   🎨 Using default color (blurple)")
                     
                     description_text = msg_data.description if msg_data.description else ""
                     if description_text:
@@ -262,23 +304,32 @@ class PuddlesBot(discord.Client):
                     )
                     
                     # Create view (should already be registered with bot)
+                    print(f"   🔧 Creating new view...")
                     view = InteractiveMessageView(msg_data)
+                    
+                    print(f"   📝 Updating Discord message...")
                     await message.edit(embed=embed, view=view)
                     refreshed += 1
+                    print(f"   ✅ Successfully refreshed message {msg_data.message_id}")
                     
                 except Exception as e:
-                    print(f"⚠️ Could not refresh message {msg_data.message_id}: {e}")
+                    print(f"   ⚠️ Could not refresh message {msg_data.message_id}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
                     
         except Exception as e:
             print(f"❌ Error during auto-refresh: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             session.close()
             
+        print(f"\n🎉 Auto-refresh complete!")
         if refreshed > 0:
-            print(f"✅ Auto-refreshed {refreshed} interactive messages")
+            print(f"✅ Successfully refreshed {refreshed} interactive messages")
         else:
-            print("ℹ️ No messages needed refreshing")
+            print("ℹ️ No messages were refreshed")
 
 client = PuddlesBot()
 
