@@ -90,6 +90,9 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "`/topinvite` - Show the top 10 inviters in the server\n"
             "`/showinvites @user` - Show detailed invite statistics for a user\n"
+            "`/resetinvites` - **[Admin]** Reset all invite data with confirmation\n"
+            "`/editinvites @user` - **[Admin]** Edit a user's invite statistics\n"
+            "`/invw @user add/remove` - **[Admin]** Manage invite admin whitelist\n"
             "`/invitesync` - **[Admin]** Manually sync invite data\n"
             "`/invitestats` - **[Admin]** Show comprehensive server invite statistics\n"
             "`/invitereset` - **[Admin]** Reset invite tracking tables (deletes all data)"

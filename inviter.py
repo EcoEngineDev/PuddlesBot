@@ -78,6 +78,16 @@ class InviteStats(Base):
     net_invites = Column(Integer, default=0)    # total_invites - total_leaves
     last_updated = Column(DateTime, default=datetime.utcnow)
 
+class InviteAdmin(Base):
+    """Track users who can manage invite system"""
+    __tablename__ = 'invite_admins'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False)
+    server_id = Column(String, nullable=False)
+    added_by = Column(String, nullable=False)
+    added_at = Column(DateTime, default=datetime.utcnow)
+
 # Create tables
 def init_invite_tables():
     """Initialize invite tracking tables"""
@@ -216,6 +226,26 @@ async def handle_member_join(member):
     finally:
         session.close()
 
+async def can_manage_invites(interaction: discord.Interaction) -> bool:
+    """Check if user can manage invite system"""
+    # Server administrators can always manage invites
+    if interaction.user.guild_permissions.administrator:
+        return True
+    
+    # Check if user is in invite admin whitelist
+    session = get_session()
+    try:
+        admin_record = session.query(InviteAdmin).filter_by(
+            user_id=str(interaction.user.id),
+            server_id=str(interaction.guild_id)
+        ).first()
+        return admin_record is not None
+    except Exception as e:
+        print(f"Error checking invite admin permissions: {e}")
+        return False
+    finally:
+        session.close()
+
 async def handle_member_leave(member):
     """Handle when a member leaves - update leave statistics"""
     guild = member.guild
@@ -278,7 +308,328 @@ async def send_leave_notification(guild, member, inviter_id):
     # For now, just log it
     pass
 
+# UI Components
+
+class ResetInvitesConfirmView(discord.ui.View):
+    """Confirmation view for resetting all invite data"""
+    
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.confirmed = False
+    
+    @discord.ui.button(label="✅ Yes, Reset All Data", style=discord.ButtonStyle.danger)
+    async def confirm_reset(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.confirmed = True
+        
+        # Disable all buttons
+        for item in self.children:
+            item.disabled = True
+        
+        await interaction.response.edit_message(content="🔄 Resetting all invite data...", view=self)
+        
+        # Reset all invite data
+        session = get_session()
+        try:
+            # Delete all invite stats for this server
+            session.query(InviteStats).filter_by(
+                guild_id=str(interaction.guild_id)
+            ).delete()
+            
+            # Delete all invite joins for this server
+            session.query(InviteJoin).filter_by(
+                guild_id=str(interaction.guild_id)
+            ).delete()
+            
+            # Keep invite tracker entries but reset uses to 0
+            invite_trackers = session.query(InviteTracker).filter_by(
+                guild_id=str(interaction.guild_id)
+            ).all()
+            
+            for tracker in invite_trackers:
+                tracker.uses = 0
+            
+            session.commit()
+            
+            # Re-sync current invite data
+            await sync_invite_database(interaction.guild)
+            await update_invite_cache(interaction.guild)
+            
+            await interaction.edit_original_response(
+                content="✅ **All invite data has been reset!**\n\n"
+                        "• All user statistics cleared\n"
+                        "• All join/leave records deleted\n"
+                        "• Invite tracking restarted fresh\n\n"
+                        "The system will now track new activity from this point forward.",
+                view=None
+            )
+            
+        except Exception as e:
+            print(f"Error resetting invite data: {e}")
+            await interaction.edit_original_response(
+                content=f"❌ Error occurred while resetting data: {str(e)}",
+                view=None
+            )
+        finally:
+            session.close()
+    
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_reset(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="❌ Invite data reset cancelled.",
+            view=None
+        )
+
+class EditInvitesModal(discord.ui.Modal):
+    """Modal for editing user invite statistics"""
+    
+    def __init__(self, user: discord.Member, current_stats: Optional[InviteStats] = None):
+        super().__init__(title=f"Edit Invites for {user.display_name}")
+        self.user = user
+        self.current_stats = current_stats
+        
+        # Current values or defaults
+        current_invites = str(current_stats.total_invites) if current_stats else "0"
+        current_leaves = str(current_stats.total_leaves) if current_stats else "0"
+        
+        self.invites_input = discord.ui.TextInput(
+            label="Total Invites",
+            placeholder="Enter the total number of people this user has invited",
+            default=current_invites,
+            required=True,
+            max_length=10
+        )
+        self.add_item(self.invites_input)
+        
+        self.leaves_input = discord.ui.TextInput(
+            label="Total Leaves",
+            placeholder="Enter the total number of people who left after being invited",
+            default=current_leaves,
+            required=True,
+            max_length=10
+        )
+        self.add_item(self.leaves_input)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            # Validate inputs
+            try:
+                total_invites = int(self.invites_input.value)
+                total_leaves = int(self.leaves_input.value)
+                
+                if total_invites < 0 or total_leaves < 0:
+                    raise ValueError("Values cannot be negative")
+                    
+                if total_leaves > total_invites:
+                    await interaction.response.send_message(
+                        "❌ Total leaves cannot be greater than total invites!",
+                        ephemeral=True
+                    )
+                    return
+                    
+            except ValueError:
+                await interaction.response.send_message(
+                    "❌ Please enter valid positive numbers only!",
+                    ephemeral=True
+                )
+                return
+            
+            # Update database
+            session = get_session()
+            try:
+                if self.current_stats:
+                    # Update existing stats
+                    self.current_stats.total_invites = total_invites
+                    self.current_stats.total_leaves = total_leaves
+                    self.current_stats.net_invites = total_invites - total_leaves
+                    self.current_stats.last_updated = datetime.utcnow()
+                else:
+                    # Create new stats
+                    new_stats = InviteStats(
+                        guild_id=str(interaction.guild_id),
+                        inviter_id=str(self.user.id),
+                        total_invites=total_invites,
+                        total_leaves=total_leaves,
+                        net_invites=total_invites - total_leaves,
+                        last_updated=datetime.utcnow()
+                    )
+                    session.add(new_stats)
+                
+                session.commit()
+                
+                net_invites = total_invites - total_leaves
+                await interaction.response.send_message(
+                    f"✅ **Updated invite statistics for {self.user.display_name}:**\n\n"
+                    f"• **Total Invites:** {total_invites}\n"
+                    f"• **Total Leaves:** {total_leaves}\n"
+                    f"• **Net Invites:** {net_invites}",
+                    ephemeral=True
+                )
+                
+            except Exception as e:
+                print(f"Error updating invite stats: {e}")
+                await interaction.response.send_message(
+                    "❌ An error occurred while updating the statistics.",
+                    ephemeral=True
+                )
+            finally:
+                session.close()
+                
+        except Exception as e:
+            print(f"Error in EditInvitesModal: {e}")
+            await interaction.response.send_message(
+                "❌ An unexpected error occurred.",
+                ephemeral=True
+            )
+
 # Commands
+
+@app_commands.command(
+    name="resetinvites",
+    description="Reset all invite data for this server (Admin only)"
+)
+@log_command
+async def resetinvites(interaction: discord.Interaction):
+    """Reset all invite data with confirmation"""
+    # Check permissions
+    if not await can_manage_invites(interaction):
+        await interaction.response.send_message(
+            "❌ You don't have permission to manage invite data!\n\n"
+            "Only administrators or users on the invite whitelist can use this command.\n"
+            "Ask an admin to add you with `/invw add @user`",
+            ephemeral=True
+        )
+        return
+    
+    # Show confirmation
+    embed = discord.Embed(
+        title="⚠️ Reset All Invite Data",
+        description=(
+            "**This will permanently delete:**\n"
+            "• All user invite statistics\n"
+            "• All join/leave tracking records\n"
+            "• All historical invite data\n\n"
+            "**This action CANNOT be undone!**\n\n"
+            "Are you sure you want to reset all invite data for this server?"
+        ),
+        color=discord.Color.red()
+    )
+    
+    view = ResetInvitesConfirmView()
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+@app_commands.command(
+    name="editinvites",
+    description="Edit invite statistics for a user (Admin only)"
+)
+@app_commands.describe(
+    user="The user whose invite statistics you want to edit"
+)
+@log_command
+async def editinvites(interaction: discord.Interaction, user: discord.Member):
+    """Edit invite statistics for a specific user"""
+    # Check permissions
+    if not await can_manage_invites(interaction):
+        await interaction.response.send_message(
+            "❌ You don't have permission to manage invite data!\n\n"
+            "Only administrators or users on the invite whitelist can use this command.\n"
+            "Ask an admin to add you with `/invw add @user`",
+            ephemeral=True
+        )
+        return
+    
+    # Get current stats
+    session = get_session()
+    try:
+        current_stats = session.query(InviteStats).filter_by(
+            guild_id=str(interaction.guild_id),
+            inviter_id=str(user.id)
+        ).first()
+        
+        modal = EditInvitesModal(user, current_stats)
+        await interaction.response.send_modal(modal)
+        
+    except Exception as e:
+        print(f"Error in editinvites command: {e}")
+        await interaction.response.send_message(
+            "❌ An error occurred while loading user statistics.",
+            ephemeral=True
+        )
+    finally:
+        session.close()
+
+@app_commands.command(
+    name="invw",
+    description="Add or remove a user from the invite admin whitelist (Admin only)"
+)
+@app_commands.describe(
+    user="The user to add/remove from the invite admin whitelist",
+    action="The action to perform: 'add' or 'remove'"
+)
+@checks.has_permissions(administrator=True)
+@log_command
+async def invw(interaction: discord.Interaction, user: discord.Member, action: str):
+    """Manage invite admin whitelist"""
+    if action.lower() not in ['add', 'remove']:
+        await interaction.response.send_message(
+            "❌ Invalid action! Use 'add' or 'remove'.",
+            ephemeral=True
+        )
+        return
+    
+    session = get_session()
+    try:
+        existing_admin = session.query(InviteAdmin).filter_by(
+            user_id=str(user.id),
+            server_id=str(interaction.guild_id)
+        ).first()
+        
+        if action.lower() == 'add':
+            if existing_admin:
+                await interaction.response.send_message(
+                    f"❌ {user.display_name} is already in the invite admin whitelist!",
+                    ephemeral=True
+                )
+                return
+            
+            new_admin = InviteAdmin(
+                user_id=str(user.id),
+                server_id=str(interaction.guild_id),
+                added_by=str(interaction.user.id)
+            )
+            session.add(new_admin)
+            session.commit()
+            
+            await interaction.response.send_message(
+                f"✅ Added {user.display_name} to the invite admin whitelist!\n"
+                f"They can now use invite management commands like `/editinvites` and `/resetinvites`.",
+                ephemeral=True
+            )
+            
+        else:  # remove
+            if not existing_admin:
+                await interaction.response.send_message(
+                    f"❌ {user.display_name} is not in the invite admin whitelist!",
+                    ephemeral=True
+                )
+                return
+            
+            session.delete(existing_admin)
+            session.commit()
+            
+            await interaction.response.send_message(
+                f"✅ Removed {user.display_name} from the invite admin whitelist!\n"
+                f"They can no longer use invite management commands (unless they're an admin).",
+                ephemeral=True
+            )
+            
+    except Exception as e:
+        print(f"Error in invw command: {str(e)}")
+        await interaction.response.send_message(
+            f"An error occurred while updating the whitelist: {str(e)}",
+            ephemeral=True
+        )
+    finally:
+        session.close()
 
 @app_commands.command(
     name="topinvite",
@@ -498,12 +849,14 @@ async def invitereset(interaction: discord.Interaction):
         Base.metadata.drop_all(engine, tables=[
             InviteTracker.__table__,
             InviteJoin.__table__,
-            InviteStats.__table__
+            InviteStats.__table__,
+            InviteAdmin.__table__
         ])
         Base.metadata.create_all(engine, tables=[
             InviteTracker.__table__,
             InviteJoin.__table__,
-            InviteStats.__table__
+            InviteStats.__table__,
+            InviteAdmin.__table__
         ])
         
         # Re-sync invite data
@@ -606,12 +959,15 @@ async def invitestats(interaction: discord.Interaction):
 
 def setup_inviter_commands(tree):
     """Add invite tracking commands to the command tree"""
+    tree.add_command(resetinvites)
+    tree.add_command(editinvites)
+    tree.add_command(invw)
     tree.add_command(topinvite)
     tree.add_command(showinvites)
     tree.add_command(invitesync)
     tree.add_command(invitestats)
     tree.add_command(invitereset)
-    print("✅ Invite tracking commands loaded: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
+    print("✅ Invite tracking commands loaded: /resetinvites, /editinvites, /invw, /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
 
 # Event handlers that need to be called from main.py
 async def on_member_join(member):
