@@ -7,9 +7,8 @@ import traceback
 from datetime import datetime
 from database import get_session
 import sqlalchemy
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, desc, func
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, desc, func
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
 
 # Store reference to the client
 _client = None
@@ -53,9 +52,6 @@ class InviteTracker(Base):
     channel_id = Column(String, nullable=False)  # Channel invite was created for
     uses = Column(Integer, default=0)  # Current uses of the invite
     created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationships
-    joins = relationship("InviteJoin", back_populates="invite", cascade="all, delete-orphan")
 
 class InviteJoin(Base):
     """Track when users join through specific invites"""
@@ -69,9 +65,6 @@ class InviteJoin(Base):
     joined_at = Column(DateTime, default=datetime.utcnow)
     has_left = Column(Boolean, default=False)
     left_at = Column(DateTime, nullable=True)
-    
-    # Relationships
-    invite = relationship("InviteTracker", back_populates="joins")
 
 class InviteStats(Base):
     """Aggregate invite statistics per user per guild"""
@@ -489,6 +482,50 @@ async def invitesync(interaction: discord.Interaction):
         )
 
 @app_commands.command(
+    name="invitereset",
+    description="Reset invite tracking tables (Admin only - use with caution!)"
+)
+@checks.has_permissions(administrator=True)
+@log_command
+async def invitereset(interaction: discord.Interaction):
+    """Reset invite tracking tables - WARNING: This deletes all invite data"""
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        from database import engine
+        
+        # Drop and recreate tables
+        Base.metadata.drop_all(engine, tables=[
+            InviteTracker.__table__,
+            InviteJoin.__table__,
+            InviteStats.__table__
+        ])
+        Base.metadata.create_all(engine, tables=[
+            InviteTracker.__table__,
+            InviteJoin.__table__,
+            InviteStats.__table__
+        ])
+        
+        # Re-sync invite data
+        guild = interaction.guild
+        await sync_invite_database(guild)
+        await update_invite_cache(guild)
+        
+        await interaction.followup.send(
+            "⚠️ **Invite tracking tables reset successfully!**\n\n"
+            "All previous invite data has been deleted and tables recreated.\n"
+            "The system will now start tracking fresh from current invites.",
+            ephemeral=True
+        )
+        
+    except Exception as e:
+        print(f"Error in invitereset command: {e}")
+        await interaction.followup.send(
+            f"❌ An error occurred while resetting invite tables: {str(e)}",
+            ephemeral=True
+        )
+
+@app_commands.command(
     name="invitestats",
     description="Show overall server invite statistics (Admin only)"
 )
@@ -573,7 +610,8 @@ def setup_inviter_commands(tree):
     tree.add_command(showinvites)
     tree.add_command(invitesync)
     tree.add_command(invitestats)
-    print("✅ Invite tracking commands loaded: /topinvite, /showinvites, /invitesync, /invitestats")
+    tree.add_command(invitereset)
+    print("✅ Invite tracking commands loaded: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
 
 # Event handlers that need to be called from main.py
 async def on_member_join(member):

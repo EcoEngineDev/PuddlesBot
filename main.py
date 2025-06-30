@@ -61,7 +61,7 @@ class PuddlesBot(discord.Client):
             print("Core commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw")
             print("Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
             print("Fun commands: /quack, /diceroll")
-            print("Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats")
+            print("Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
             print("Utility commands: /help")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
