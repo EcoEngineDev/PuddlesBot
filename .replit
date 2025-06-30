@@ -1,11 +1,11 @@
-language = "python3"
-run = "python main.py"
+run = "python start_services.py"
+modules = ["python-3.11"]
 
 [nix]
 channel = "stable-23_11"
 
 [deployment]
-run = ["sh", "-c", "python main.py"]
+run = ["sh", "-c", "python start_services.py"]
 
 [[ports]]
 localPort = 8080
@@ -25,7 +25,7 @@ pattern = "**/*.py"
 syntax = "python"
 
 [languages.python3.languageServer]
-start = ["pylsp"]
+start = "pylsp"
 
 [workflows]
 runButton = "Run Bot"
@@ -42,3 +42,9 @@ args = "pip install -r requirements.txt"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python main.py"
+
+[env]
+PYTHONPATH = "/home/runner/$REPL_SLUG"
+
+[gitHubImport]
+requiredFiles = [".replit", "pyproject.toml"]

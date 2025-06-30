@@ -43,13 +43,13 @@ def setup_music_system(client):
     # Initialize Lavalink
     _lavalink = lavalink.Client(client.user.id)
     
-    # Use a hosted Lavalink node (perfect for Replit!)
+    # Add a default node (you can modify these settings)
     _lavalink.add_node(
-        host='lavalink.darrennathanael.com',  # Free hosted Lavalink service
-        port=2333,
-        password='anything as a password',    # This specific node accepts any password
-        region='us',
-        name='hosted-node'
+        host='localhost',  # Change this to your Lavalink server host
+        port=2333,         # Change this to your Lavalink server port
+        password='youshallnotpass',  # Change this to match your application.yml
+        region='us',       # Region identifier
+        name='default-node'  # Node name
     )
     
     # Hook the track events
