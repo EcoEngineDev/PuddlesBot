@@ -189,7 +189,7 @@ class MusicPlayer:
         self.auto_leave_task = None
         
     async def connect(self, channel: discord.VoiceChannel):
-        """Connect to a voice channel with enhanced retry logic and permission checking"""
+        """Connect to a voice channel using Pycord's improved voice handling"""
         # Check bot permissions first
         permissions = channel.permissions_for(channel.guild.me)
         if not permissions.connect:
@@ -215,50 +215,56 @@ class MusicPlayer:
                     print(f"✅ Already connected to voice channel: {channel.name}")
                     return
             
-            # Enhanced connection strategy for hosted environments
-            print(f"🔗 Attempting to connect to voice channel: {channel.name}")
+            print(f"🔗 Attempting to connect to voice channel: {channel.name} (using Pycord)")
             
-            # Strategy 1: Direct connection with longer timeout
-            for attempt in range(2):
-                try:
-                    print(f"📡 Voice connection attempt {attempt + 1}/2...")
+            # Pycord has better voice connection handling for hosted environments
+            try:
+                # Use Pycord's improved connection with better timeout handling
+                self.voice_client = await channel.connect(
+                    timeout=60.0,           # Longer timeout for hosted environments
+                    reconnect=True,         # Enable automatic reconnection
+                    self_deaf=True,         # Optimize performance by self-deafening
+                )
+                
+                # Verify connection
+                if self.voice_client and self.voice_client.is_connected():
+                    print(f"✅ Successfully connected to voice channel: {channel.name}")
+                    # Small delay to ensure connection is stable
+                    await asyncio.sleep(1)
+                    return
+                else:
+                    raise discord.errors.ClientException("Connection established but not properly connected")
                     
-                    # Use a longer timeout for hosted environments
-                    self.voice_client = await asyncio.wait_for(
-                        channel.connect(timeout=30.0, reconnect=True), 
-                        timeout=45.0
+            except discord.errors.ClientException as e:
+                print(f"⚠️ Pycord voice connection failed: {type(e).__name__}: {e}")
+                
+                # Check for specific hosting environment issues
+                if any(error_code in str(e) for error_code in ["4006", "4014", "Session no longer valid", "Invalid session"]):
+                    raise discord.errors.ClientException(
+                        "Voice connection failed due to hosting environment limitations. "
+                        "This hosting platform may not support Discord voice features."
                     )
-                    
-                    # Verify connection is actually working
-                    if self.voice_client and self.voice_client.is_connected():
-                        print(f"✅ Successfully connected to voice channel: {channel.name}")
-                        # Small delay to ensure connection is stable
-                        await asyncio.sleep(1)
-                        return
-                    else:
-                        raise discord.errors.ClientException("Connection established but not properly connected")
+                else:
+                    # Try one more time with different settings
+                    try:
+                        print("🔄 Retrying with fallback settings...")
+                        await asyncio.sleep(3)
                         
-                except (asyncio.TimeoutError, discord.errors.ConnectionClosed) as e:
-                    print(f"⚠️ Voice connection attempt {attempt + 1} failed: {type(e).__name__}: {e}")
-                    if self.voice_client:
-                        try:
-                            await self.voice_client.disconnect(force=True)
-                        except:
-                            pass
-                        self.voice_client = None
-                    
-                    if attempt == 1:  # Last attempt
-                        # Check if this is a hosting environment limitation
-                        if "4006" in str(e) or "Session no longer valid" in str(e):
-                            raise discord.errors.ClientException(
-                                "Voice connection failed due to hosting environment limitations. "
-                                "This bot may not support voice features on this hosting platform."
-                            )
+                        self.voice_client = await channel.connect(
+                            timeout=30.0,
+                            reconnect=False,    # Disable reconnect for second attempt
+                            self_deaf=False,    # Don't self-deaf for compatibility
+                        )
+                        
+                        if self.voice_client and self.voice_client.is_connected():
+                            print(f"✅ Connected on retry to voice channel: {channel.name}")
+                            return
                         else:
-                            raise discord.errors.ClientException(f"Voice connection failed after multiple attempts: {e}")
-                    
-                    # Wait longer between attempts for hosted environments
-                    await asyncio.sleep(5)
+                            raise discord.errors.ClientException("Retry connection failed")
+                            
+                    except Exception as retry_error:
+                        print(f"❌ Retry failed: {retry_error}")
+                        raise discord.errors.ClientException(f"Voice connection failed: {str(e)}")
                     
         except discord.errors.ClientException:
             raise  # Re-raise client exceptions as-is
@@ -1076,6 +1082,13 @@ async def musicstatus(interaction: discord.Interaction):
     # Spotify status
     spotify_status = "✅ Configured" if spotify else "❌ Not configured"
     embed.add_field(name="Spotify Integration", value=spotify_status, inline=True)
+    
+    # Bot & Library Information
+    import platform
+    bot_info = f"**Pycord Version:** {discord.__version__}\n"
+    bot_info += f"**Python Version:** {platform.python_version()}\n"
+    bot_info += f"**OS:** {platform.system()} {platform.release()}"
+    embed.add_field(name="🤖 System Info", value=bot_info, inline=False)
     
     # Hosting environment
     env_info = detect_hosting_environment()

@@ -41,7 +41,7 @@ async def help_command(interaction: discord.Interaction):
     """Display comprehensive help information"""
     
     embed = discord.Embed(
-        title="🤖 Puddles Bot - Command Help",
+        title="🤖 Puddles Bot - Command Help (Powered by Pycord)",
         description="Here are all the available commands and how to use them:",
         color=discord.Color.blue()
     )
