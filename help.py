@@ -117,7 +117,8 @@ async def help_command(interaction: discord.Interaction):
             "`/remove <position>` - Remove song from queue\n"
             "`/clear` - Clear entire queue\n"
             "`/leave` - Disconnect from voice channel\n"
-            "`/search <query>` - Search for songs without playing"
+            "`/search <query>` - Search for songs without playing\n"
+            "`/musicdebug` - Check music system requirements and status"
         ),
         inline=False
     )
