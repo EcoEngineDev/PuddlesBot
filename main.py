@@ -34,7 +34,7 @@ class PuddlesBot(discord.Client):
         try:
             await self.tree.sync(guild=None)  # None means global sync
             print("Commands synced successfully!")
-            print("Available commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw, /quack, /diceroll")
+            print("Available commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw, /quack, /diceroll, /help")
             print("Ticket system commands: /intmsg, /editintmsg, /listmessages, /ticketstats, /imw, /fixdb")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
@@ -2681,6 +2681,97 @@ async def diceroll(interaction: discord.Interaction, number_of_dice: int):
     except Exception as e:
         print(f"Error in diceroll command: {e}")
         await interaction.response.send_message("❌ An error occurred while rolling dice!", ephemeral=True)
+
+@client.tree.command(
+    name="help",
+    description="Show all available commands and their descriptions"
+)
+@log_command
+async def help_command(interaction: discord.Interaction):
+    """Display comprehensive help information"""
+    
+    embed = discord.Embed(
+        title="🤖 Puddles Bot - Command Help",
+        description="Here are all the available commands and how to use them:",
+        color=discord.Color.blue()
+    )
+    
+    # Task Management Commands
+    embed.add_field(
+        name="📋 **Task Management**",
+        value=(
+            "`/task` - Create a new task with name, assignee, due date, and description\n"
+            "`/mytasks` - View all tasks assigned to you\n"
+            "`/taskedit` - Edit your existing tasks (name, due date, description, assignee)\n"
+            "`/showtasks @user` - View tasks assigned to a specific user\n"
+            "`/alltasks` - **[Admin]** View all active tasks in the server (paginated)\n"
+            "`/tcw @user add/remove` - **[Admin]** Manage task creator whitelist"
+        ),
+        inline=False
+    )
+    
+    # Interactive Message & Ticket System
+    embed.add_field(
+        name="🎫 **Interactive Messages & Tickets**",
+        value=(
+            "`/intmsg` - Create interactive messages with ticket/role buttons\n"
+            "`/editintmsg [message_id]` - **[Staff]** Edit existing interactive messages\n"
+            "`/listmessages` - **[Staff]** List all interactive messages in the server\n"
+            "`/ticketstats` - **[Staff]** View ticket statistics and recent activity\n"
+            "`/imw @user add/remove` - **[Admin]** Manage interactive message creator whitelist"
+        ),
+        inline=False
+    )
+    
+    # Fun & Utility Commands
+    embed.add_field(
+        name="🎮 **Fun & Utility**",
+        value=(
+            "`/quack` - Get a random duck image 🦆\n"
+            "`/diceroll [1-100]` - Roll dice and see visual results with statistics\n"
+            "`/help` - Show this help message"
+        ),
+        inline=False
+    )
+    
+    # Admin & System Commands
+    embed.add_field(
+        name="🔧 **Admin & System**",
+        value=(
+            "`/fixdb` - **[Admin]** Fix database schema issues\n"
+            "`/testpersistence` - **[Admin]** Test the persistence system"
+        ),
+        inline=False
+    )
+    
+    # Permission Legend
+    embed.add_field(
+        name="🔑 **Permission Legend**",
+        value=(
+            "**[Admin]** - Requires Administrator permission\n"
+            "**[Staff]** - Requires Manage Messages permission\n"
+            "No tag - Available to all users (some may require whitelist)"
+        ),
+        inline=False
+    )
+    
+    # Additional Info
+    embed.add_field(
+        name="💡 **Special Features**",
+        value=(
+            "• **Persistent Views** - Buttons work even after bot restarts\n"
+            "• **Task Notifications** - Get DMs when tasks are due soon\n"
+            "• **Ticket System** - Create support tickets with custom questions\n"
+            "• **Role Management** - Assign/remove roles with buttons\n"
+            "• **Pagination** - Large lists are split into easy-to-read pages\n"
+            "• **Ping Support** - Use @everyone/@here in interactive messages"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="For detailed help with any command, try using it and see the prompts!")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ============= END TICKET SYSTEM COMMANDS =============
 
