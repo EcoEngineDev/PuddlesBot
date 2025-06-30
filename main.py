@@ -20,6 +20,7 @@ import dice
 import intmsg
 import fun
 import help
+import inviter
 from ticket_system import (
     InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal, TicketControlView
@@ -45,12 +46,14 @@ class PuddlesBot(discord.Client):
             intmsg.setup_intmsg_system(self)
             fun.setup_fun_system(self)
             help.setup_help_system(self)
+            inviter.setup_inviter_system(self)
             
             # Register commands from modules
             dice.setup_dice_commands(self.tree)
             intmsg.setup_intmsg_commands(self.tree)
             fun.setup_fun_commands(self.tree)
             help.setup_help_commands(self.tree)
+            inviter.setup_inviter_commands(self.tree)
             
             print("Syncing commands...")
             await self.tree.sync(guild=None)  # None means global sync
@@ -58,6 +61,7 @@ class PuddlesBot(discord.Client):
             print("Core commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw")
             print("Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
             print("Fun commands: /quack, /diceroll")
+            print("Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats")
             print("Utility commands: /help")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
@@ -86,6 +90,9 @@ class PuddlesBot(discord.Client):
         
         print("🔄 Starting persistence system...")
         await self.load_persistent_views()
+        
+        print("🔄 Initializing invite tracking system...")
+        await inviter.on_ready()
 
     async def check_due_tasks(self):
         session = get_session()
@@ -115,6 +122,19 @@ class PuddlesBot(discord.Client):
     async def on_error(self, event, *args, **kwargs):
         print(f"Error in {event}:", file=sys.stderr)
         traceback.print_exc()
+    
+    async def on_member_join(self, member):
+        """Handle member join events for invite tracking"""
+        await inviter.on_member_join(member)
+    
+    async def on_member_remove(self, member):
+        """Handle member leave events for invite tracking"""
+        await inviter.on_member_remove(member)
+    
+    async def on_guild_join(self, guild):
+        """Handle bot joining a new guild"""
+        print(f"🎉 Bot joined new guild: {guild.name}")
+        await inviter.on_guild_join(guild)
 
     async def backup_database(self):
         """Create a backup of the database"""

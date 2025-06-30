@@ -84,6 +84,18 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
     
+    # Invite Tracking Commands
+    embed.add_field(
+        name="📊 **Invite Tracking**",
+        value=(
+            "`/topinvite` - Show the top 10 inviters in the server\n"
+            "`/showinvites @user` - Show detailed invite statistics for a user\n"
+            "`/invitesync` - **[Admin]** Manually sync invite data\n"
+            "`/invitestats` - **[Admin]** Show comprehensive server invite statistics"
+        ),
+        inline=False
+    )
+    
     # Admin & System Commands
     embed.add_field(
         name="🔧 **Admin & System**",
@@ -113,6 +125,7 @@ async def help_command(interaction: discord.Interaction):
             "• **Task Notifications** - Get DMs when tasks are due soon\n"
             "• **Ticket System** - Create support tickets with custom questions\n"
             "• **Role Management** - Assign/remove roles with buttons\n"
+            "• **Invite Tracking** - Track who joins through whose invites\n"
             "• **Pagination** - Large lists are split into easy-to-read pages\n"
             "• **Ping Support** - Use @everyone/@here in interactive messages"
         ),
