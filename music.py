@@ -14,6 +14,7 @@ import aiofiles
 from datetime import datetime, timedelta
 import traceback
 import json
+import imageio_ffmpeg as ffmpeg
 
 # Store references
 _client = None
@@ -38,6 +39,20 @@ def setup_music_system(client):
     """Initialize the music system with client reference"""
     global _client
     _client = client
+    
+    # Test FFmpeg availability
+    try:
+        import subprocess
+        result = subprocess.run([FFMPEG_EXECUTABLE, '-version'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            print(f"✅ FFmpeg is working correctly!")
+            print(f"🔧 FFmpeg version: {result.stdout.split()[2] if len(result.stdout.split()) > 2 else 'Unknown'}")
+        else:
+            print(f"⚠️ FFmpeg test failed with return code: {result.returncode}")
+    except Exception as e:
+        print(f"⚠️ FFmpeg test error: {e}")
+        print("🔧 Music system may not work properly without FFmpeg")
 
 def log_command(func):
     @functools.wraps(func)
@@ -74,9 +89,22 @@ YDL_OPTIONS = {
     'extract_flat': False,
 }
 
+# Get FFmpeg executable path
+try:
+    FFMPEG_EXECUTABLE = ffmpeg.get_ffmpeg_exe()
+    print(f"🔧 Using FFmpeg from: {FFMPEG_EXECUTABLE}")
+except Exception as e:
+    print(f"⚠️ FFmpeg not found via imageio-ffmpeg: {e}")
+    FFMPEG_EXECUTABLE = 'ffmpeg'  # Fallback to system FFmpeg
+
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
+    'options': '-vn -filter:a "volume=0.5"'
+}
+
+# Additional options for discord.py
+FFMPEG_EXECUTABLE_OPTIONS = {
+    'executable': FFMPEG_EXECUTABLE
 }
 
 class Song:
@@ -110,24 +138,29 @@ class MusicPlayer:
         self.auto_leave_task = None
         
     async def connect(self, channel: discord.VoiceChannel):
-        """Connect to a voice channel with error handling"""
+        """Connect to a voice channel with retry logic"""
         try:
             if self.voice_client and self.voice_client.is_connected():
                 if self.voice_client.channel != channel:
                     await self.voice_client.move_to(channel)
-                    print(f"🔄 Moved to voice channel: {channel.name}")
             else:
-                self.voice_client = await channel.connect(timeout=30.0, reconnect=True)
-                print(f"🔊 Connected to voice channel: {channel.name}")
-        except discord.errors.ClientException as e:
-            print(f"❌ Voice connection error: {e}")
-            raise Exception(f"Failed to connect to voice channel: {str(e)}")
-        except asyncio.TimeoutError:
-            print("❌ Voice connection timed out")
-            raise Exception("Voice connection timed out. Please try again.")
+                # Try to connect with timeout and retry logic
+                for attempt in range(3):
+                    try:
+                        self.voice_client = await asyncio.wait_for(
+                            channel.connect(timeout=10.0), 
+                            timeout=15.0
+                        )
+                        print(f"✅ Connected to voice channel: {channel.name}")
+                        break
+                    except (asyncio.TimeoutError, discord.errors.ClientException) as e:
+                        print(f"⚠️ Voice connection attempt {attempt + 1} failed: {e}")
+                        if attempt == 2:  # Last attempt
+                            raise discord.errors.ClientException(f"Failed to connect to voice after 3 attempts: {e}")
+                        await asyncio.sleep(2)  # Wait before retry
         except Exception as e:
-            print(f"❌ Unexpected voice error: {e}")
-            raise Exception(f"Voice connection failed: {str(e)}")
+            print(f"❌ Voice connection error: {e}")
+            raise
             
     async def disconnect(self):
         """Disconnect from voice channel"""
@@ -179,27 +212,17 @@ class MusicPlayer:
                 return
                 
             # Create audio source
-            try:
-                source = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTIONS)
-                source = discord.PCMVolumeTransformer(source, volume=self.volume)
-            except discord.errors.ClientException as e:
-                if "ffmpeg" in str(e).lower():
-                    print("❌ FFmpeg not found! Please install FFmpeg to use music features.")
-                    print("For Replit: Make sure replit.nix includes ffmpeg-full")
-                    print("For local: Download from https://ffmpeg.org/download.html")
-                    return
-                else:
-                    print(f"❌ Audio source error: {e}")
-                    await self.play_next()  # Skip to next song
-                    return
+            source = discord.FFmpegPCMAudio(
+                stream_url, 
+                executable=FFMPEG_EXECUTABLE,
+                **FFMPEG_OPTIONS
+            )
+            source = discord.PCMVolumeTransformer(source, volume=self.volume)
             
             # Play the song
-            def after_playing(error):
-                if error:
-                    print(f"❌ Player error: {error}")
-                asyncio.run_coroutine_threadsafe(self.play_next(), _client.loop)
-            
-            self.voice_client.play(source, after=after_playing)
+            self.voice_client.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(
+                self.play_next(), _client.loop
+            ))
             
             self.is_playing = True
             self.is_paused = False
@@ -282,35 +305,6 @@ def get_player(guild: discord.Guild) -> MusicPlayer:
     if guild.id not in music_players:
         music_players[guild.id] = MusicPlayer(guild)
     return music_players[guild.id]
-
-def check_music_requirements() -> tuple[bool, str]:
-    """Check if all music requirements are met"""
-    import shutil
-    
-    # Check FFmpeg
-    if not shutil.which('ffmpeg'):
-        return False, ("❌ **FFmpeg not found!**\n\n"
-                      "**To fix this:**\n"
-                      "• **Replit**: Create `replit.nix` file with `pkgs.ffmpeg-full`\n"
-                      "• **Local Windows**: Download from https://ffmpeg.org/download.html\n"
-                      "• **Local Linux**: `sudo apt install ffmpeg`\n"
-                      "• **Local macOS**: `brew install ffmpeg`")
-    
-    # Check PyNaCl for voice
-    try:
-        import nacl
-    except ImportError:
-        return False, ("❌ **PyNaCl not found!**\n\n"
-                      "Run: `pip install PyNaCl==1.5.0`")
-    
-    # Check yt-dlp
-    try:
-        import yt_dlp
-    except ImportError:
-        return False, ("❌ **yt-dlp not found!**\n\n"
-                      "Run: `pip install yt-dlp==2024.12.13`")
-    
-    return True, "✅ All music requirements are met!"
 
 async def search_youtube(query: str, limit: int = 1) -> List[Dict]:
     """Search YouTube for videos"""
@@ -412,35 +406,32 @@ async def play(interaction: discord.Interaction, query: str):
         
     await interaction.response.defer()
     
-    # Check if all music requirements are met
-    requirements_ok, requirements_msg = check_music_requirements()
-    if not requirements_ok:
-        await interaction.followup.send(requirements_msg)
-        return
-    
     try:
         player = get_player(interaction.guild)
         voice_channel = interaction.user.voice.channel
         
-        # Check bot permissions in voice channel
-        bot_member = interaction.guild.me
-        if not voice_channel.permissions_for(bot_member).connect:
-            await interaction.followup.send("❌ I don't have permission to connect to that voice channel!")
-            return
-        
-        if not voice_channel.permissions_for(bot_member).speak:
-            await interaction.followup.send("❌ I don't have permission to speak in that voice channel!")
-            return
-        
         # Connect to voice channel
         try:
             await player.connect(voice_channel)
+        except discord.errors.ClientException as e:
+            await interaction.followup.send(
+                f"❌ **Failed to connect to voice channel!**\n\n"
+                f"This might be due to:\n"
+                f"• Bot missing voice permissions\n"
+                f"• Voice channel is full\n"
+                f"• Network connectivity issues\n"
+                f"• Server hosting limitations\n\n"
+                f"Error: {str(e)}", 
+                ephemeral=True
+            )
+            return
         except Exception as e:
-            await interaction.followup.send(f"❌ Failed to connect to voice channel: {str(e)}\n\n"
-                                          "**Possible solutions:**\n"
-                                          "• Make sure I have `Connect` and `Speak` permissions\n"
-                                          "• Try disconnecting and reconnecting to the voice channel\n"
-                                          "• Check if the voice channel is full")
+            await interaction.followup.send(
+                f"❌ **Voice connection error!**\n"
+                f"Please try again or contact an administrator.\n\n"
+                f"Error: {str(e)}", 
+                ephemeral=True
+            )
             return
         
         songs_added = []
@@ -873,85 +864,76 @@ async def search(interaction: discord.Interaction, query: str):
     except Exception as e:
         await interaction.followup.send(f"❌ Search failed: {str(e)}")
 
-@app_commands.command(name="musicdebug", description="Check music system requirements and status")
+@app_commands.command(name="musicstatus", description="Check music system status (Admin only)")
+@app_commands.default_permissions(administrator=True)
 @log_command
-async def musicdebug(interaction: discord.Interaction):
-    """Debug music system requirements"""
-    import shutil
-    import sys
-    import platform
-    
+async def musicstatus(interaction: discord.Interaction):
+    """Check music system status and configuration"""
     embed = discord.Embed(
-        title="🔍 Music System Debug",
+        title="🎵 Music System Status",
         color=discord.Color.blue()
     )
     
-    # System info
-    embed.add_field(
-        name="🖥️ System Info",
-        value=f"**Platform:** {platform.system()} {platform.release()}\n"
-              f"**Python:** {sys.version.split()[0]}\n"
-              f"**Discord.py:** {discord.__version__}",
-        inline=False
-    )
-    
-    # Check requirements
-    requirements_ok, requirements_msg = check_music_requirements()
-    
-    # FFmpeg check
-    ffmpeg_path = shutil.which('ffmpeg')
-    ffmpeg_status = f"✅ Found at: `{ffmpeg_path}`" if ffmpeg_path else "❌ Not found"
-    
-    # Library checks
-    libs_status = []
-    for lib_name, import_name in [("PyNaCl", "nacl"), ("yt-dlp", "yt_dlp"), ("spotipy", "spotipy")]:
-        try:
-            __import__(import_name)
-            libs_status.append(f"✅ {lib_name}")
-        except ImportError:
-            libs_status.append(f"❌ {lib_name}")
-    
-    embed.add_field(
-        name="📦 Dependencies",
-        value=f"**FFmpeg:** {ffmpeg_status}\n" + "\n".join(libs_status),
-        inline=False
-    )
-    
-    # Voice status
-    player = get_player(interaction.guild)
-    voice_status = "Not connected"
-    if player.voice_client:
-        if player.voice_client.is_connected():
-            voice_status = f"✅ Connected to {player.voice_client.channel.name}"
+    # FFmpeg status
+    try:
+        import subprocess
+        result = subprocess.run([FFMPEG_EXECUTABLE, '-version'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            ffmpeg_status = f"✅ Working (v{result.stdout.split()[2] if len(result.stdout.split()) > 2 else 'Unknown'})"
         else:
-            voice_status = "❌ Connection failed"
+            ffmpeg_status = f"❌ Failed (code: {result.returncode})"
+    except Exception as e:
+        ffmpeg_status = f"❌ Error: {str(e)}"
     
-    embed.add_field(
-        name="🔊 Voice Status",
-        value=voice_status,
-        inline=False
-    )
+    embed.add_field(name="FFmpeg", value=ffmpeg_status, inline=True)
+    embed.add_field(name="FFmpeg Path", value=f"`{FFMPEG_EXECUTABLE}`", inline=False)
+    
+    # Voice client status
+    player = get_player(interaction.guild)
+    if player.voice_client:
+        voice_status = f"✅ Connected to {player.voice_client.channel.name}"
+        if player.current_song:
+            voice_status += f"\n🎵 Playing: {player.current_song.title}"
+    else:
+        voice_status = "❌ Not connected"
+    
+    embed.add_field(name="Voice Connection", value=voice_status, inline=True)
     
     # Queue status
-    queue_status = f"**Current:** {player.current_song.title if player.current_song else 'None'}\n"
-    queue_status += f"**Queue:** {len(player.queue)} songs\n"
-    queue_status += f"**Playing:** {'Yes' if player.is_playing else 'No'}\n"
-    queue_status += f"**Paused:** {'Yes' if player.is_paused else 'No'}"
+    queue_status = f"📋 {len(player.queue)} songs in queue"
+    if player.loop_mode != "off":
+        queue_status += f"\n🔄 Loop: {player.loop_mode}"
     
-    embed.add_field(
-        name="🎵 Playback Status",
-        value=queue_status,
-        inline=False
-    )
+    embed.add_field(name="Queue", value=queue_status, inline=True)
     
-    if not requirements_ok:
-        embed.add_field(
-            name="❌ Issues Found",
-            value=requirements_msg,
-            inline=False
-        )
+    # Dependencies
+    deps_status = ""
+    try:
+        import yt_dlp
+        deps_status += "✅ yt-dlp\n"
+    except ImportError:
+        deps_status += "❌ yt-dlp\n"
+        
+    try:
+        import spotipy
+        deps_status += "✅ spotipy\n"
+    except ImportError:
+        deps_status += "❌ spotipy\n"
+        
+    try:
+        import imageio_ffmpeg
+        deps_status += "✅ imageio-ffmpeg\n"
+    except ImportError:
+        deps_status += "❌ imageio-ffmpeg\n"
     
-    await interaction.response.send_message(embed=embed)
+    embed.add_field(name="Dependencies", value=deps_status, inline=True)
+    
+    # Spotify status
+    spotify_status = "✅ Configured" if spotify else "❌ Not configured"
+    embed.add_field(name="Spotify Integration", value=spotify_status, inline=True)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 def setup_music_commands(tree):
     """Add music commands to the command tree"""
@@ -969,8 +951,8 @@ def setup_music_commands(tree):
     tree.add_command(clear)
     tree.add_command(leave)
     tree.add_command(search)
-    tree.add_command(musicdebug)
-    print("🎵 Music commands loaded: /play, /pause, /resume, /skip, /stop, /queue, /nowplaying, /volume, /loop, /shuffle, /remove, /clear, /leave, /search, /musicdebug")
+    tree.add_command(musicstatus)
+    print("🎵 Music commands loaded: /play, /pause, /resume, /skip, /stop, /queue, /nowplaying, /volume, /loop, /shuffle, /remove, /clear, /leave, /search, /musicstatus")
 
 # Cleanup function
 async def cleanup_music_players():
