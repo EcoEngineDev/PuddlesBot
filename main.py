@@ -45,12 +45,24 @@ class PuddlesBot(discord.Client):
         # Add backup job to run every 6 hours
         self.scheduler.add_job(self.backup_database, 'interval', hours=6)
         
-        # Load persistent views for ticket system
-        await self.load_persistent_views()
+        # Removed load_persistent_views from setup_hook - now handled in on_ready with proper timing
 
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print('------')
+        
+        # Wait a moment for Discord.py to fully load all data
+        print("⏳ Waiting for Discord.py to fully load all guilds and channels...")
+        await asyncio.sleep(3)
+        
+        # Check if all guilds are available
+        unavailable_guilds = [g for g in self.guilds if g.unavailable]
+        if unavailable_guilds:
+            print(f"⚠️ {len(unavailable_guilds)} guilds are unavailable, waiting longer...")
+            await asyncio.sleep(5)
+        
+        print("🔄 Starting persistence system...")
+        await self.load_persistent_views()
 
     async def check_due_tasks(self):
         session = get_session()
@@ -100,6 +112,11 @@ class PuddlesBot(discord.Client):
         
         print("🔄 Starting persistence restoration...")
         
+        # Add debugging information about bot's access
+        print(f"🤖 Bot is connected to {len(self.guilds)} guild(s):")
+        for guild in self.guilds:
+            print(f"   • {guild.name} (ID: {guild.id}) - {len(guild.channels)} channels")
+        
         try:
             # STEP 1: Clean up deleted messages from database
             print("🧹 Cleaning up deleted messages...")
@@ -110,18 +127,94 @@ class PuddlesBot(discord.Client):
                 print(f"\n🔍 Checking message {msg_data.id}:")
                 print(f"   Discord Message ID: {msg_data.message_id}")
                 print(f"   Channel ID: {msg_data.channel_id}")
+                print(f"   Server ID: {msg_data.server_id}")
                 print(f"   Title: {msg_data.title}")
                 print(f"   Buttons: {len(msg_data.buttons)}")
+                
+                # Check if bot is in the server where this message was created
+                target_guild = self.get_guild(int(msg_data.server_id))
+                if target_guild:
+                    print(f"   ✅ Bot is in server: {target_guild.name}")
+                else:
+                    print(f"   ❌ Bot is NOT in server {msg_data.server_id}")
+                    print(f"   🗑️ Removing message {msg_data.id} from database (bot not in server)")
+                    session.delete(msg_data)
+                    cleaned_messages += 1
+                    continue
                 
                 try:
                     channel = self.get_channel(int(msg_data.channel_id))
                     if not channel:
-                        print(f"   ❌ Channel {msg_data.channel_id} not found, removing message {msg_data.id} from database")
-                        session.delete(msg_data)
-                        cleaned_messages += 1
-                        continue
+                        print(f"   ❌ Channel {msg_data.channel_id} not found with get_channel()")
+                        print(f"   🔍 Channel ID type: {type(msg_data.channel_id)}")
+                        print(f"   🔍 Channel ID value: '{msg_data.channel_id}'")
+                        
+                        # Try converting to int explicitly
+                        try:
+                            channel_id_int = int(msg_data.channel_id)
+                            print(f"   🔍 Converted to int: {channel_id_int}")
+                        except ValueError as ve:
+                            print(f"   ❌ Cannot convert channel ID to int: {ve}")
+                            session.delete(msg_data)
+                            cleaned_messages += 1
+                            continue
+                        
+                        # Try different methods to get the channel
+                        print(f"   🔍 Trying different channel lookup methods...")
+                        
+                        # Method 1: get_channel with explicit int
+                        test_channel = self.get_channel(channel_id_int)
+                        print(f"   • get_channel(int): {test_channel}")
+                        
+                        # Method 2: Look in the target guild specifically
+                        guild_channel = target_guild.get_channel(channel_id_int)
+                        print(f"   • guild.get_channel(): {guild_channel}")
+                        
+                        # Method 3: Try to fetch from Discord API
+                        try:
+                            print(f"   🔍 Attempting to fetch channel directly from Discord API...")
+                            fetched_channel = await self.fetch_channel(channel_id_int)
+                            print(f"   • fetch_channel(): {fetched_channel}")
+                            if fetched_channel:
+                                print(f"   ✅ Channel exists! Name: #{fetched_channel.name}")
+                                print(f"   ✅ Guild: {fetched_channel.guild.name}")
+                                print(f"   ⚠️ But get_channel() failed - possible caching issue")
+                                channel = fetched_channel  # Use the fetched channel
+                            else:
+                                print(f"   ❌ fetch_channel() also returned None")
+                        except discord.Forbidden as e:
+                            print(f"   ❌ No permission to fetch channel: {e}")
+                        except discord.NotFound as e:
+                            print(f"   ❌ Channel truly doesn't exist: {e}")
+                        except Exception as e:
+                            print(f"   ❌ Error fetching channel: {e}")
+                        
+                        # If we still don't have the channel, try searching all guilds
+                        if not channel:
+                            print(f"   🔍 Searching all {len(self.guilds)} guilds for channel...")
+                            found_in_guild = None
+                            for guild in self.guilds:
+                                guild_channel = guild.get_channel(channel_id_int)
+                                if guild_channel:
+                                    found_in_guild = guild
+                                    channel = guild_channel
+                                    break
+                            
+                            if found_in_guild:
+                                print(f"   🔍 Channel found in guild: {found_in_guild.name} (ID: {found_in_guild.id})")
+                                print(f"   🔍 Channel name: #{guild_channel.name}")
+                                print(f"   ⚠️ But bot.get_channel() couldn't access it - cache issue?")
+                            else:
+                                print(f"   🔍 Channel not found in any of {len(self.guilds)} connected guilds")
+                        
+                        # If we STILL don't have the channel, remove from database
+                        if not channel:
+                            print(f"   🗑️ Removing message {msg_data.id} from database - channel truly inaccessible")
+                            session.delete(msg_data)
+                            cleaned_messages += 1
+                            continue
                     
-                    print(f"   ✅ Channel found: #{channel.name}")
+                    print(f"   ✅ Channel found: #{channel.name} in {channel.guild.name}")
                     
                     try:
                         message = await channel.fetch_message(int(msg_data.message_id))
@@ -2362,6 +2455,23 @@ async def fixdb(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ Database fix failed: {str(e)}", ephemeral=True)
         print(f"Database fix error: {e}")
         print(traceback.format_exc())
+
+@client.tree.command(
+    name="testpersistence",
+    description="Test the persistence system (Admin only)"
+)
+@checks.has_permissions(administrator=True)
+@log_command
+async def testpersistence(interaction: discord.Interaction):
+    """Test persistence system without restarting"""
+    await interaction.response.defer(ephemeral=True)
+    
+    await interaction.followup.send("🔄 Testing persistence system...", ephemeral=True)
+    
+    # Run the persistence loading system
+    await client.load_persistent_views()
+    
+    await interaction.followup.send("✅ Persistence test complete! Check console for detailed output.", ephemeral=True)
 
 # ============= END TICKET SYSTEM COMMANDS =============
 
