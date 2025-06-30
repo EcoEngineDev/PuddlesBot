@@ -100,6 +100,28 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
     
+    # Music Commands
+    embed.add_field(
+        name="🎵 **Music System**",
+        value=(
+            "`/play <song/url>` - Play a song or add to queue (YouTube/Spotify support)\n"
+            "`/pause` - Pause the current song\n"
+            "`/resume` - Resume paused music\n"
+            "`/skip` - Skip current song (vote skip for multiple users)\n"
+            "`/stop` - Stop music and clear queue\n"
+            "`/queue` - Show current music queue\n"
+            "`/nowplaying` - Show currently playing song\n"
+            "`/volume <1-100>` - Set music volume\n"
+            "`/loop <off/song/queue>` - Set loop mode\n"
+            "`/shuffle` - Shuffle the queue\n"
+            "`/remove <position>` - Remove song from queue\n"
+            "`/clear` - Clear entire queue\n"
+            "`/leave` - Disconnect from voice channel\n"
+            "`/search <query>` - Search for songs without playing"
+        ),
+        inline=False
+    )
+    
     # Admin & System Commands
     embed.add_field(
         name="🔧 **Admin & System**",
@@ -130,6 +152,9 @@ async def help_command(interaction: discord.Interaction):
             "• **Ticket System** - Create support tickets with custom questions\n"
             "• **Role Management** - Assign/remove roles with buttons\n"
             "• **Invite Tracking** - Track who joins through whose invites\n"
+            "• **Music System** - YouTube & Spotify integration with queue management\n"
+            "• **Vote Skip** - Democratic music control for multiple users\n"
+            "• **Auto-Leave** - Bot leaves voice when inactive (5 min timer)\n"
             "• **Pagination** - Large lists are split into easy-to-read pages\n"
             "• **Ping Support** - Use @everyone/@here in interactive messages"
         ),
