@@ -82,9 +82,6 @@ class Basic(commands.Cog):
     async def cog_unload(self) -> None:
         self.bot.tree.remove_command(self.ctx_menu.name, type=self.ctx_menu.type)
 
-    async def help_autocomplete(self, interaction: discord.Interaction, current: str) -> list:
-        return [app_commands.Choice(name=c.capitalize(), value=c) for c in self.bot.cogs if c not in ["Nodes", "Task"] and current in c]
-
     async def play_autocomplete(self, interaction: discord.Interaction, current: str) -> list:
         if voicelink.pool.URL_REGEX.match(current):
             return []
@@ -845,17 +842,6 @@ class Basic(commands.Cog):
         
         if player.is_ipc_connected:
             await player.send_ws({"op": "toggleAutoplay", "status": check})
-
-    @commands.hybrid_command(name="help", aliases=get_aliases("help"))
-    @app_commands.autocomplete(category=help_autocomplete)
-    @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def help(self, ctx: commands.Context, category: str = "News") -> None:
-        "Lists all the commands in Vocard."
-        if category not in self.bot.cogs:
-            category = "News"
-        view = HelpView(self.bot, ctx.author)
-        embed = view.build_embed(category)
-        view.response = await send(ctx, embed, view=view)
 
     @commands.hybrid_command(name="ping", aliases=get_aliases("ping"))
     @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
