@@ -24,6 +24,7 @@ import fun
 import help
 import inviter
 import quality_manager
+import tasks
 from ticket_system import (
     InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal, TicketControlView
@@ -199,6 +200,7 @@ class PuddlesBot(commands.Bot):
             fun.setup_fun_system(self)
             help.setup_help_system(self)
             inviter.setup_inviter_system(self)
+            tasks.setup_tasks_system(self)
             
             # Register commands from non-music modules
             dice.setup_dice_commands(self.tree)
@@ -207,6 +209,7 @@ class PuddlesBot(commands.Bot):
             help.setup_help_commands(self.tree)
             inviter.setup_inviter_commands(self.tree)
             quality_manager.setup_quality_commands(self.tree, self)
+            tasks.setup_task_commands(self.tree)
             
             # Initialize Vocard music system
             await self.setup_vocard_music()
