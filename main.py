@@ -236,7 +236,7 @@ class PuddlesBot(commands.Bot):
             await self.tree.sync(guild=None)  # None means global sync
             print("Commands synced successfully!")
             print("✅ All commands registered successfully!")
-            print("📋 Task commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw")
+            print("📋 Task commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /oldtasks, /tcw")
             print("💬 Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
             print("🎲 Fun commands: /quack, /diceroll")
             print("📨 Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
