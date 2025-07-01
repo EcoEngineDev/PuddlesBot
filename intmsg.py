@@ -80,12 +80,21 @@ async def can_create_intmsg(interaction: discord.Interaction) -> bool:
 async def start_intmsg_conversation(interaction):
     """Start the interactive message conversation"""
     user_id = str(interaction.user.id)
+    channel_id = str(interaction.channel_id)
+    guild_id = str(interaction.guild_id)
+    
+    print(f"🚀 Starting intmsg conversation for user {user_id}")
+    print(f"   Channel: {channel_id}")
+    print(f"   Guild: {guild_id}")
+    
     intmsg_conversations[user_id] = IntMsgConversation(
         user_id, 
-        str(interaction.channel_id), 
-        str(interaction.guild_id),
+        channel_id, 
+        guild_id,
         None  # Will be set when user chooses channel
     )
+    
+    print(f"   ✅ Conversation initialized, total active: {len(intmsg_conversations)}")
 
 async def handle_intmsg_message(message):
     """Handle conversation messages for intmsg creation"""
@@ -94,12 +103,24 @@ async def handle_intmsg_message(message):
     
     user_id = str(message.author.id)
     
+    # Debug: Print conversation status
+    print(f"🔍 Message from {message.author.name} (ID: {user_id})")
+    print(f"   Channel: {message.channel.id}")
+    print(f"   Content: {message.content}")
+    print(f"   Active conversations: {list(intmsg_conversations.keys())}")
+    
     # Check if user is in an intmsg conversation
     if user_id in intmsg_conversations:
         conversation = intmsg_conversations[user_id]
         
+        print(f"   ✅ Found conversation for user {user_id}")
+        print(f"   Expected channel: {conversation.channel_id}")
+        print(f"   Message channel: {message.channel.id}")
+        print(f"   Conversation step: {conversation.step}")
+        
         # Check if message is in the right channel
         if str(message.channel.id) != conversation.channel_id:
+            print(f"   ❌ Channel mismatch: {message.channel.id} != {conversation.channel_id}")
             return False
         
         # Handle cancel
@@ -108,8 +129,16 @@ async def handle_intmsg_message(message):
             await message.reply("❌ Interactive message creation cancelled.")
             return True
         
-        await handle_intmsg_conversation_step(message, conversation)
+        print(f"   🎯 Processing conversation step {conversation.step}")
+        try:
+            await handle_intmsg_conversation_step(message, conversation)
+        except Exception as e:
+            print(f"   ❌ Error in conversation step: {e}")
+            print(traceback.format_exc())
+            await message.reply(f"❌ An error occurred: {str(e)}\nType `cancel` to abort or try again.")
         return True
+    else:
+        print(f"   ❌ No conversation found for user {user_id}")
     
     return False
 
@@ -117,9 +146,12 @@ async def handle_intmsg_conversation_step(message, conversation):
     """Handle each step of the intmsg conversation"""
     content = message.content.strip()
     
+    print(f"🎬 Handling conversation step {conversation.step} with content: '{content}'")
+    
     if conversation.step == 1:  # Title
         conversation.data['title'] = content
         conversation.step = 2
+        print(f"   ✅ Title set to: {content}, moving to step 2")
         await message.reply(
             f"✅ Title set to: **{content}**\n\n"
             "**Step 2/7:** What should the **description** be? (or type `skip` for no description)"
@@ -964,15 +996,16 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
             )
             return
         
-        await interaction.response.send_message(
-            "🎨 **Interactive Message Creator Started!**\n\n"
-            "I'll guide you through creating your interactive message. You can cancel anytime by typing `cancel`.\n\n"
-            "**Step 1/7:** What should the **title** of your message be?",
-            ephemeral=True
-        )
-        
-        # Start the conversation flow
+        # Start the conversation flow first
         await start_intmsg_conversation(interaction)
+        
+        await interaction.response.send_message(
+            f"🎨 **Interactive Message Creator Started!** {interaction.user.mention}\n\n"
+            "I'll guide you through creating your interactive message. You can cancel anytime by typing `cancel`.\n\n"
+            "**Step 1/7:** What should the **title** of your message be?\n"
+            "👆 **Please reply to this message in this channel with your title!**",
+            ephemeral=False  # Make it visible so user knows where to respond
+        )
 
     @tree.command(
         name="imw",
