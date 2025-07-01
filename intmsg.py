@@ -83,9 +83,7 @@ async def start_intmsg_conversation(interaction):
     channel_id = str(interaction.channel_id)
     guild_id = str(interaction.guild_id)
     
-    print(f"🚀 Starting intmsg conversation for user {user_id}")
-    print(f"   Channel: {channel_id}")
-    print(f"   Guild: {guild_id}")
+    print(f"🚀 Starting intmsg conversation for {interaction.user.name}")
     
     intmsg_conversations[user_id] = IntMsgConversation(
         user_id, 
@@ -103,20 +101,11 @@ async def handle_intmsg_message(message):
     
     user_id = str(message.author.id)
     
-    # Debug: Print conversation status
-    print(f"🔍 Message from {message.author.name} (ID: {user_id})")
-    print(f"   Channel: {message.channel.id}")
-    print(f"   Content: {message.content}")
-    print(f"   Active conversations: {list(intmsg_conversations.keys())}")
-    
     # Check if user is in an intmsg conversation
     if user_id in intmsg_conversations:
         conversation = intmsg_conversations[user_id]
         
-        print(f"   ✅ Found conversation for user {user_id}")
-        print(f"   Expected channel: {conversation.channel_id}")
-        print(f"   Message channel: {message.channel.id}")
-        print(f"   Conversation step: {conversation.step}")
+        print(f"🎯 Processing intmsg conversation for {message.author.name} (step {conversation.step})")
         
         # Check if message is in the right channel
         if str(message.channel.id) != conversation.channel_id:
@@ -129,7 +118,6 @@ async def handle_intmsg_message(message):
             await message.reply("❌ Interactive message creation cancelled.")
             return True
         
-        print(f"   🎯 Processing conversation step {conversation.step}")
         try:
             await handle_intmsg_conversation_step(message, conversation)
         except Exception as e:
@@ -137,8 +125,6 @@ async def handle_intmsg_message(message):
             print(traceback.format_exc())
             await message.reply(f"❌ An error occurred: {str(e)}\nType `cancel` to abort or try again.")
         return True
-    else:
-        print(f"   ❌ No conversation found for user {user_id}")
     
     return False
 
@@ -146,12 +132,9 @@ async def handle_intmsg_conversation_step(message, conversation):
     """Handle each step of the intmsg conversation"""
     content = message.content.strip()
     
-    print(f"🎬 Handling conversation step {conversation.step} with content: '{content}'")
-    
     if conversation.step == 1:  # Title
         conversation.data['title'] = content
         conversation.step = 2
-        print(f"   ✅ Title set to: {content}, moving to step 2")
         await message.reply(
             f"✅ Title set to: **{content}**\n\n"
             "**Step 2/7:** What should the **description** be? (or type `skip` for no description)"

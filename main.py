@@ -625,6 +625,52 @@ class PuddlesBot(commands.Bot):
             print(f"✅ Successfully refreshed {refreshed} interactive messages")
         else:
             print("ℹ️ No messages were refreshed")
+    
+    async def on_message(self, message: discord.Message):
+        """Handle messages - includes Vocard music request channel logic"""
+        # Ignore messages from bots or DMs
+        if message.author.bot or not message.guild:
+            return
+
+        # Check if the bot is directly mentioned (Vocard functionality)
+        if music_func and hasattr(music_func, 'settings') and self.user.id in message.raw_mentions and not message.mention_everyone:
+            prefix = await self.command_prefix(self, message)
+            if not prefix:
+                return await message.channel.send("I don't have a bot prefix set.")
+            await message.channel.send(f"My prefix is `{prefix}`")
+
+        # Check for music request channel (Vocard functionality)
+        if music_func and hasattr(music_func, 'settings'):
+            try:
+                settings = await music_func.get_settings(message.guild.id)
+                if settings and (request_channel := settings.get("music_request_channel")):
+                    if message.channel.id == request_channel.get("text_channel_id"):
+                        ctx = await self.get_context(message)
+                        try:
+                            cmd = self.get_command("play")
+                            if cmd:
+                                if message.content:
+                                    await cmd(ctx, query=message.content)
+                                elif message.attachments:
+                                    for attachment in message.attachments:
+                                        await cmd(ctx, query=attachment.url)
+                        except Exception as e:
+                            await music_func.send(ctx, str(e), ephemeral=True)
+                        finally:
+                            return await message.delete()
+            except Exception as e:
+                print(f"Error in music request channel handling: {e}")
+        
+        # Handle intmsg conversation messages
+        try:
+            handled = await intmsg.handle_intmsg_message(message)
+            if handled:
+                return  # Don't process as command if handled by intmsg
+        except Exception as e:
+            print(f"Error in intmsg message handling: {e}")
+            print(traceback.format_exc())
+            
+        await self.process_commands(message)
 
 client = PuddlesBot()
 
@@ -1508,48 +1554,6 @@ async def alltasks(interaction: discord.Interaction):
 # ============= TICKET SYSTEM COMMANDS =============
 
 
-
-    async def on_message(self, message: discord.Message):
-        """Handle messages - includes Vocard music request channel logic"""
-        # Ignore messages from bots or DMs
-        if message.author.bot or not message.guild:
-            return
-
-        # Check if the bot is directly mentioned (Vocard functionality)
-        if music_func and hasattr(music_func, 'settings') and self.user.id in message.raw_mentions and not message.mention_everyone:
-            prefix = await self.command_prefix(self, message)
-            if not prefix:
-                return await message.channel.send("I don't have a bot prefix set.")
-            await message.channel.send(f"My prefix is `{prefix}`")
-
-        # Check for music request channel (Vocard functionality)
-        if music_func and hasattr(music_func, 'settings'):
-            try:
-                settings = await music_func.get_settings(message.guild.id)
-                if settings and (request_channel := settings.get("music_request_channel")):
-                    if message.channel.id == request_channel.get("text_channel_id"):
-                        ctx = await self.get_context(message)
-                        try:
-                            cmd = self.get_command("play")
-                            if cmd:
-                                if message.content:
-                                    await cmd(ctx, query=message.content)
-                                elif message.attachments:
-                                    for attachment in message.attachments:
-                                        await cmd(ctx, query=attachment.url)
-                        except Exception as e:
-                            await music_func.send(ctx, str(e), ephemeral=True)
-                        finally:
-                            return await message.delete()
-            except Exception as e:
-                print(f"Error in music request channel handling: {e}")
-        
-        # Handle intmsg conversation messages
-        await intmsg.handle_intmsg_message(message)
-            
-        await self.process_commands(message)
-
-# Note: on_message is now handled within the PuddlesBot class
 
 # Interactive message commands are now in intmsg.py
 # @log_command
