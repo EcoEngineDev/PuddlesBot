@@ -161,16 +161,11 @@ class PuddlesBot(commands.Bot):
                 except Exception as e:
                     print(f"❌ Failed to setup Voicelink NodePool: {e}")
             
-            # Load Vocard cogs (skip basic to avoid help command conflict)
+            # Load Vocard cogs (handle basic cog specially to avoid help command conflict)
             cogs_path = os.path.join(os.path.dirname(__file__), 'MusicSystem', 'cogs')
             if os.path.exists(cogs_path):
                 for module in os.listdir(cogs_path):
                     if module.endswith('.py') and not module.startswith('__'):
-                        # Skip basic cog to avoid help command conflict
-                        if module == 'basic.py':
-                            print("⚠️ Skipping basic cog to avoid help command conflict")
-                            continue
-                            
                         try:
                             # Change to MusicSystem directory context for cog loading
                             original_cwd = os.getcwd()
@@ -179,6 +174,18 @@ class PuddlesBot(commands.Bot):
                             
                             await self.load_extension(f"cogs.{module[:-3]}")
                             print(f"✅ Loaded Vocard cog: {module[:-3]}")
+                            
+                            # If this is the basic cog, remove the conflicting help command
+                            if module == 'basic.py':
+                                try:
+                                    # Get the basic cog
+                                    basic_cog = self.get_cog('Basic')
+                                    if basic_cog and hasattr(basic_cog, 'help'):
+                                        # Remove the help command from the basic cog
+                                        self.remove_command('help')
+                                        print("✅ Removed conflicting help command from basic cog")
+                                except Exception as e:
+                                    print(f"⚠️ Could not remove help command from basic cog: {e}")
                             
                             # Restore original directory
                             os.chdir(original_cwd)
