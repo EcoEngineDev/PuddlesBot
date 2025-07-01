@@ -1,5 +1,6 @@
 import discord
 from discord import app_commands
+from discord.ext import commands
 import requests
 import os
 from keep_alive import keep_alive
@@ -14,6 +15,7 @@ import sys
 import functools
 from discord.app_commands import checks
 import sqlalchemy
+import json
 
 # Import the modular systems
 import dice
@@ -21,42 +23,178 @@ import intmsg
 import fun
 import help
 import inviter
-import music
 from ticket_system import (
     InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal, TicketControlView
 )
-import dice
-import intmsg
+
+# Import Vocard music system components
+sys.path.append(os.path.join(os.path.dirname(__file__), 'MusicSystem'))
+try:
+    import function as music_func
+    from addons import Settings
+    import voicelink
+    from ipc import IPCClient
+    from motor.motor_asyncio import AsyncIOMotorClient
+    print("✅ Vocard music system components imported successfully")
+except ImportError as e:
+    print(f"❌ Failed to import Vocard components: {e}")
+    music_func = None
+    Settings = None
+    voicelink = None
+    IPCClient = None
+    AsyncIOMotorClient = None
 
 # Initialize bot with all intents
-class PuddlesBot(discord.Client):
+class PuddlesBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True  # Needed for member resolution
-        super().__init__(intents=intents)
-        self.tree = app_commands.CommandTree(self)
+        
+        # Initialize as commands.Bot to work with Vocard
+        super().__init__(command_prefix='!', intents=intents)
         self.scheduler = AsyncIOScheduler()
         
+        # Initialize Vocard components if available
+        if music_func and Settings:
+            self.setup_vocard_settings()
+    
+    def setup_vocard_settings(self):
+        """Set up Vocard settings with environment variables"""
+        try:
+            # Load settings from file
+            settings_path = os.path.join(os.path.dirname(__file__), 'MusicSystem', 'settings.json')
+            with open(settings_path, 'r') as f:
+                settings_data = json.load(f)
+            
+            # Update with environment variables
+            settings_data['token'] = os.getenv('DISCORD_TOKEN', settings_data['token'])
+            settings_data['client_id'] = os.getenv('DISCORD_CLIENT_ID', settings_data['client_id'])
+            settings_data['mongodb_url'] = os.getenv('MONGODB_URL', settings_data['mongodb_url'])
+            settings_data['mongodb_name'] = os.getenv('MONGODB_NAME', settings_data['mongodb_name'])
+            settings_data['genius_token'] = os.getenv('GENIUS_TOKEN', settings_data['genius_token'])
+            
+            # Create Settings object and assign to music_func
+            music_func.settings = Settings(settings_data)
+            print("✅ Vocard settings initialized successfully")
+            
+        except Exception as e:
+            print(f"❌ Failed to setup Vocard settings: {e}")
+    
+    async def connect_music_db(self):
+        """Connect to MongoDB for music system"""
+        if not music_func or not hasattr(music_func, 'settings'):
+            return
+            
+        settings = music_func.settings
+        if not ((db_name := settings.mongodb_name) and (db_url := settings.mongodb_url)):
+            print("⚠️ MongoDB not configured for music system, skipping database connection")
+            return
+
+        try:
+            music_func.MONGO_DB = AsyncIOMotorClient(host=db_url)
+            await music_func.MONGO_DB.server_info()
+            print(f"✅ Music system connected to MongoDB [{db_name}]")
+            
+            music_func.SETTINGS_DB = music_func.MONGO_DB[db_name]["Settings"]
+            music_func.USERS_DB = music_func.MONGO_DB[db_name]["Users"]
+            
+                 except Exception as e:
+             print(f"⚠️ Music system MongoDB connection failed: {e}")
+    
+    async def setup_vocard_music(self):
+        """Set up Vocard music system"""
+        if not music_func or not Settings:
+            print("⚠️ Vocard components not available, skipping music setup")
+            return
+            
+        try:
+            # Setup languages
+            music_func.langs_setup()
+            
+            # Connect to MongoDB
+            await self.connect_music_db()
+            
+            # Setup IPC client (optional)
+            if hasattr(music_func.settings, 'ipc_client') and IPCClient:
+                self.ipc = IPCClient(self, **music_func.settings.ipc_client)
+                if music_func.settings.ipc_client.get("enable", False):
+                    try:
+                        await self.ipc.connect()
+                        print("✅ IPC client connected")
+                    except Exception as e:
+                        print(f"⚠️ IPC client connection failed: {e}")
+            
+            # Setup Voicelink NodePool
+            if voicelink and hasattr(music_func.settings, 'nodes'):
+                try:
+                    # Create nodes from settings
+                    nodes = []
+                    for node_name, node_config in music_func.settings.nodes.items():
+                        node = voicelink.Node(
+                            host=node_config['host'],
+                            port=node_config['port'],
+                            password=node_config['password'],
+                            secure=node_config.get('secure', False),
+                            identifier=node_config.get('identifier', node_name)
+                        )
+                        nodes.append(node)
+                    
+                    # Create node pool with the client
+                    await voicelink.NodePool.create_pool(self, nodes)
+                    print("✅ Voicelink NodePool created successfully")
+                    
+                except Exception as e:
+                    print(f"❌ Failed to setup Voicelink NodePool: {e}")
+            
+            # Load Vocard cogs
+            cogs_path = os.path.join(os.path.dirname(__file__), 'MusicSystem', 'cogs')
+            if os.path.exists(cogs_path):
+                for module in os.listdir(cogs_path):
+                    if module.endswith('.py') and not module.startswith('__'):
+                        try:
+                            # Change to MusicSystem directory context for cog loading
+                            original_cwd = os.getcwd()
+                            music_system_path = os.path.join(os.path.dirname(__file__), 'MusicSystem')
+                            os.chdir(music_system_path)
+                            
+                            await self.load_extension(f"cogs.{module[:-3]}")
+                            print(f"✅ Loaded Vocard cog: {module[:-3]}")
+                            
+                            # Restore original directory
+                            os.chdir(original_cwd)
+                            
+                        except Exception as e:
+                            print(f"❌ Failed to load Vocard cog {module[:-3]}: {e}")
+                            if original_cwd:
+                                os.chdir(original_cwd)
+            
+            print("✅ Vocard music system setup completed")
+            
+        except Exception as e:
+            print(f"❌ Failed to setup Vocard music system: {e}")
+            print("Full error:", traceback.format_exc())
+     
     async def setup_hook(self):
         print("Setting up bot modules...")
         try:
-            # Setup module systems with client references
+            # Setup non-music module systems with client references
             dice.setup_dice_system(self)
             intmsg.setup_intmsg_system(self)
             fun.setup_fun_system(self)
             help.setup_help_system(self)
             inviter.setup_inviter_system(self)
-            music.setup_music_system(self)
             
-            # Register commands from modules
+            # Register commands from non-music modules
             dice.setup_dice_commands(self.tree)
             intmsg.setup_intmsg_commands(self.tree)
             fun.setup_fun_commands(self.tree)
             help.setup_help_commands(self.tree)
             inviter.setup_inviter_commands(self.tree)
-            music.setup_music_commands(self.tree)
+            
+            # Initialize Vocard music system
+            await self.setup_vocard_music()
             
             print("Syncing commands...")
             await self.tree.sync(guild=None)  # None means global sync
@@ -65,7 +203,7 @@ class PuddlesBot(discord.Client):
             print("Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
             print("Fun commands: /quack, /diceroll")
             print("Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
-            print("Music commands: /play, /skip, /stop, /pause, /resume, /queue, /volume, /nowplaying")
+            print("Music commands: Available through Vocard cogs")
             print("Utility commands: /help")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
@@ -97,9 +235,6 @@ class PuddlesBot(discord.Client):
         
         print("🔄 Initializing invite tracking system...")
         await inviter.on_ready()
-        
-        print("🔄 Initializing music system...")
-        await music.on_music_ready()
 
     async def check_due_tasks(self):
         session = get_session()
@@ -144,8 +279,8 @@ class PuddlesBot(discord.Client):
         await inviter.on_guild_join(guild)
     
     async def on_voice_state_update(self, member, before, after):
-        """Handle voice state updates for music system"""
-        await music.on_voice_state_update(member, before, after)
+        """Handle voice state updates - Vocard handles music-related voice events"""
+        pass
 
     async def backup_database(self):
         """Create a backup of the database"""
@@ -1361,11 +1496,47 @@ async def alltasks(interaction: discord.Interaction):
 
 
 
-@client.event
-async def on_message(message):
-    """Handle conversation messages for intmsg creation"""
-    # Delegate to intmsg module
-    await intmsg.handle_intmsg_message(message)
+    async def on_message(self, message: discord.Message):
+        """Handle messages - includes Vocard music request channel logic"""
+        # Ignore messages from bots or DMs
+        if message.author.bot or not message.guild:
+            return
+
+        # Check if the bot is directly mentioned (Vocard functionality)
+        if music_func and hasattr(music_func, 'settings') and self.user.id in message.raw_mentions and not message.mention_everyone:
+            prefix = await self.command_prefix(self, message)
+            if not prefix:
+                return await message.channel.send("I don't have a bot prefix set.")
+            await message.channel.send(f"My prefix is `{prefix}`")
+
+        # Check for music request channel (Vocard functionality)
+        if music_func and hasattr(music_func, 'settings'):
+            try:
+                settings = await music_func.get_settings(message.guild.id)
+                if settings and (request_channel := settings.get("music_request_channel")):
+                    if message.channel.id == request_channel.get("text_channel_id"):
+                        ctx = await self.get_context(message)
+                        try:
+                            cmd = self.get_command("play")
+                            if cmd:
+                                if message.content:
+                                    await cmd(ctx, query=message.content)
+                                elif message.attachments:
+                                    for attachment in message.attachments:
+                                        await cmd(ctx, query=attachment.url)
+                        except Exception as e:
+                            await music_func.send(ctx, str(e), ephemeral=True)
+                        finally:
+                            return await message.delete()
+            except Exception as e:
+                print(f"Error in music request channel handling: {e}")
+        
+        # Handle intmsg conversation messages
+        await intmsg.handle_intmsg_message(message)
+            
+        await self.process_commands(message)
+
+# Note: on_message is now handled within the PuddlesBot class
 
 # Interactive message commands are now in intmsg.py
 # @log_command
@@ -1384,6 +1555,9 @@ async def on_message(message):
 # /help command is now in help.py
 
 # ============= END TICKET SYSTEM COMMANDS =============
+
+# Initialize the bot
+client = PuddlesBot()
 
 # Keep the bot alive
 keep_alive()
