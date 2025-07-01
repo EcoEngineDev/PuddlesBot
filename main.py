@@ -100,8 +100,8 @@ class PuddlesBot(commands.Bot):
             music_func.SETTINGS_DB = music_func.MONGO_DB[db_name]["Settings"]
             music_func.USERS_DB = music_func.MONGO_DB[db_name]["Users"]
             
-                 except Exception as e:
-             print(f"⚠️ Music system MongoDB connection failed: {e}")
+        except Exception as e:
+            print(f"⚠️ Music system MongoDB connection failed: {e}")
     
     async def setup_vocard_music(self):
         """Set up Vocard music system"""
