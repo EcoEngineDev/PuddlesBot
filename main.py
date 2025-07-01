@@ -21,6 +21,7 @@ import intmsg
 import fun
 import help
 import inviter
+import music
 from ticket_system import (
     InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal, TicketControlView
@@ -47,6 +48,7 @@ class PuddlesBot(discord.Client):
             fun.setup_fun_system(self)
             help.setup_help_system(self)
             inviter.setup_inviter_system(self)
+            music.setup_music_system(self)
             
             # Register commands from modules
             dice.setup_dice_commands(self.tree)
@@ -54,6 +56,7 @@ class PuddlesBot(discord.Client):
             fun.setup_fun_commands(self.tree)
             help.setup_help_commands(self.tree)
             inviter.setup_inviter_commands(self.tree)
+            music.setup_music_commands(self.tree)
             
             print("Syncing commands...")
             await self.tree.sync(guild=None)  # None means global sync
@@ -62,6 +65,7 @@ class PuddlesBot(discord.Client):
             print("Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
             print("Fun commands: /quack, /diceroll")
             print("Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
+            print("Music commands: /play, /skip, /stop, /pause, /resume, /queue, /volume, /nowplaying")
             print("Utility commands: /help")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
@@ -93,6 +97,9 @@ class PuddlesBot(discord.Client):
         
         print("🔄 Initializing invite tracking system...")
         await inviter.on_ready()
+        
+        print("🔄 Initializing music system...")
+        await music.on_music_ready()
 
     async def check_due_tasks(self):
         session = get_session()
@@ -135,6 +142,10 @@ class PuddlesBot(discord.Client):
         """Handle bot joining a new guild"""
         print(f"🎉 Bot joined new guild: {guild.name}")
         await inviter.on_guild_join(guild)
+    
+    async def on_voice_state_update(self, member, before, after):
+        """Handle voice state updates for music system"""
+        await music.on_voice_state_update(member, before, after)
 
     async def backup_database(self):
         """Create a backup of the database"""
