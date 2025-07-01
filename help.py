@@ -100,21 +100,6 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
     
-    # Music Commands
-    embed.add_field(
-        name="🎵 **Music System**",
-        value=(
-            "`/play <song/url>` - Play a song or add to queue (YouTube/Spotify support)\n"
-            "`/pause` - Pause the current song\n"
-            "`/resume` - Resume paused music\n"
-            "`/skip` - Skip current song\n"
-            "`/stop` - Stop music and clear queue\n"
-            "`/disconnect` - Disconnect from voice channel\n"
-            "`/musicstatus` - **[Admin]** Check Lavalink system status"
-        ),
-        inline=False
-    )
-    
     # Admin & System Commands
     embed.add_field(
         name="🔧 **Admin & System**",
@@ -145,9 +130,6 @@ async def help_command(interaction: discord.Interaction):
             "• **Ticket System** - Create support tickets with custom questions\n"
             "• **Role Management** - Assign/remove roles with buttons\n"
             "• **Invite Tracking** - Track who joins through whose invites\n"
-            "• **Lavalink Music** - Professional music system using Lavalink servers\n"
-            "• **YouTube & Spotify** - Support for both platforms with metadata extraction\n"
-            "• **Auto-Disconnect** - Bot leaves voice when inactive (5 min timer)\n"
             "• **Pagination** - Large lists are split into easy-to-read pages\n"
             "• **Ping Support** - Use @everyone/@here in interactive messages"
         ),

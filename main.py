@@ -21,11 +21,12 @@ import intmsg
 import fun
 import help
 import inviter
-import music
 from ticket_system import (
     InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal, TicketControlView
 )
+import dice
+import intmsg
 
 # Initialize bot with all intents
 class PuddlesBot(discord.Client):
@@ -46,7 +47,6 @@ class PuddlesBot(discord.Client):
             fun.setup_fun_system(self)
             help.setup_help_system(self)
             inviter.setup_inviter_system(self)
-            music.setup_music_system(self)
             
             # Register commands from modules
             dice.setup_dice_commands(self.tree)
@@ -54,7 +54,6 @@ class PuddlesBot(discord.Client):
             fun.setup_fun_commands(self.tree)
             help.setup_help_commands(self.tree)
             inviter.setup_inviter_commands(self.tree)
-            music.setup_music_commands(self.tree)
             
             print("Syncing commands...")
             await self.tree.sync(guild=None)  # None means global sync
@@ -62,8 +61,7 @@ class PuddlesBot(discord.Client):
             print("Core commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /tcw")
             print("Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
             print("Fun commands: /quack, /diceroll")
-            print("Invite tracking commands: /resetinvites, /editinvites, /invw, /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
-            print("Music commands: /play, /pause, /resume, /skip, /stop, /queue, /nowplaying, /volume, /loop, /shuffle, /remove, /clear, /leave, /search, /musicstatus, /voicetest")
+            print("Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
             print("Utility commands: /help")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
