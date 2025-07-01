@@ -23,6 +23,7 @@ import intmsg
 import fun
 import help
 import inviter
+import quality_manager
 from ticket_system import (
     InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal, TicketControlView
@@ -205,6 +206,7 @@ class PuddlesBot(commands.Bot):
             fun.setup_fun_commands(self.tree)
             help.setup_help_commands(self.tree)
             inviter.setup_inviter_commands(self.tree)
+            quality_manager.setup_quality_commands(self.tree, self)
             
             # Initialize Vocard music system
             await self.setup_vocard_music()
@@ -217,6 +219,7 @@ class PuddlesBot(commands.Bot):
             print("Fun commands: /quack, /diceroll")
             print("Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
             print("Music commands: Available through Vocard cogs")
+            print("Audio quality commands: /quality, /audiostats")
             print("Utility commands: /help")
         except Exception as e:
             print(f"Failed to sync commands: {e}")

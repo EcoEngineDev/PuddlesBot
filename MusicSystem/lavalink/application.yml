@@ -11,13 +11,14 @@ plugins:
     allowDirectPlaylistIds: true # Whether just playlist IDs can match. If false, only complete URLs will be loaded.
     # The clients to use for track loading. See below for a list of valid clients.
     # Clients are queried in the order they are given (so the first client is queried first and so on...)
+    # Optimized order for best audio quality
     clients:
-      - MUSIC
-      - ANDROID_VR
-      - ANDROID_MUSIC
-      - WEB
-      - WEBEMBEDDED
-      - TVHTML5EMBEDDED
+      - MUSIC                # Best quality for music
+      - ANDROID_MUSIC        # High quality alternative
+      - ANDROID_VR           # Good quality backup
+      - TVHTML5EMBEDDED      # High quality TV client
+      - WEB                  # Standard web quality
+      - WEBEMBEDDED          # Fallback option
     # The below section of the config allows setting specific options for each client, such as the requests they will handle.
     # If an option, or client, is unspecified, then the default option value/client values will be used instead.
     # If a client is configured, but is not registered above, the options for that client will be ignored.
@@ -25,15 +26,31 @@ plugins:
     # WARNING!: UNDERSTANDING WHAT IT DOES. MISCONFIGURATION WILL HINDER YOUTUBE-SOURCE'S ABILITY TO WORK PROPERLY.
 
     # Write the names of clients as they are specified under the heading "Available Clients".
+    # Optimized client configuration for better audio quality
     clientOptions:
+      # Enable all capabilities for high-quality clients
+      MUSIC:
+        playback: true
+        videoLoading: true
+        playlistLoading: true
+        searching: true
+      ANDROID_MUSIC:
+        playback: true
+        videoLoading: true
+        playlistLoading: true
+        searching: true
+      # WEB client - enable for better compatibility
       WEB:
-        # Example: Disabling a client's playback capabilities.
-        playback: false
-        videoLoading: false # Disables loading of videos for this client. A client may still be used for playback even if this is set to 'false'.
+        playback: true
+        videoLoading: true
+        playlistLoading: true
+        searching: true
+      # WEBEMBEDDED - optimize for video loading
       WEBEMBEDDED:
-        # Example: Configuring a client to exclusively be used for video loading and playback.
-        playlistLoading: false # Disables loading of playlists and mixes.
-        searching: false # Disables the ability to search for videos.
+        playback: true
+        videoLoading: true
+        playlistLoading: true
+        searching: true
   lavasrc:
     providers: # Custom providers for track loading. This is the default
       # - "dzisrc:%ISRC%" # Deezer ISRC provider
@@ -133,17 +150,20 @@ lavalink:
       rotation: true
       channelMix: true
       lowPass: true
-    nonAllocatingFrameBuffer: false # Setting to true reduces the number of allocations made by each player at the expense of frame rebuilding (e.g. non-instantaneous volume changes)
-    bufferDurationMs: 400 # The duration of the NAS buffer. Higher values fare better against longer GC pauses. Duration <= 0 to disable JDA-NAS. Minimum of 40ms, lower values may introduce pauses.
-    frameBufferDurationMs: 5000 # How many milliseconds of audio to keep buffered
+    nonAllocatingFrameBuffer: true # Setting to true reduces the number of allocations made by each player at the expense of frame rebuilding (e.g. non-instantaneous volume changes)
+    bufferDurationMs: 800 # The duration of the NAS buffer. Higher values fare better against longer GC pauses. Duration <= 0 to disable JDA-NAS. Minimum of 40ms, lower values may introduce pauses.
+    frameBufferDurationMs: 8000 # How many milliseconds of audio to keep buffered (increased for better buffering)
     opusEncodingQuality: 10 # Opus encoder quality. Valid values range from 0 to 10, where 10 is best quality but is the most expensive on the CPU.
-    resamplingQuality: LOW # Quality of resampling operations. Valid values are LOW, MEDIUM and HIGH, where HIGH uses the most CPU.
-    trackStuckThresholdMs: 10000 # The threshold for how long a track can be stuck. A track is stuck if does not return any audio data.
+    resamplingQuality: HIGH # Quality of resampling operations. Valid values are LOW, MEDIUM and HIGH, where HIGH uses the most CPU.
+    trackStuckThresholdMs: 8000 # The threshold for how long a track can be stuck. A track is stuck if does not return any audio data. (reduced for faster recovery)
     useSeekGhosting: true # Seek ghosting is the effect where whilst a seek is in progress, the audio buffer is read from until empty, or until seek is ready.
-    youtubePlaylistLoadLimit: 6 # Number of pages at 100 each
-    playerUpdateInterval: 5 # How frequently to send player updates to clients, in seconds
+    youtubePlaylistLoadLimit: 10 # Number of pages at 100 each (increased for better playlist loading)
+    playerUpdateInterval: 2 # How frequently to send player updates to clients, in seconds (more frequent updates for smoother experience)
     youtubeSearchEnabled: true
     soundcloudSearchEnabled: true
+    # Additional quality optimizations
+    sendPlayerUpdates: true # Send player updates to clients for real-time sync
+    autoReconnect: true # Auto-reconnect on connection issues
     gc-warnings: true
     #ratelimit:
       #ipBlocks: ["1.0.0.0/8", "..."] # list of ip blocks
