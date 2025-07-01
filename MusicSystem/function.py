@@ -274,6 +274,12 @@ async def update_db(db: AsyncIOMotorCollection, tempStore: dict, filter: dict, d
 async def get_settings(guild_id:int) -> dict[str, Any]:
     settings = SETTINGS_BUFFER.get(guild_id, None)
     if not settings:
+        # Check if database is available
+        if SETTINGS_DB is None:
+            # Return empty settings if no database connection
+            settings = SETTINGS_BUFFER[guild_id] = {}
+            return settings
+            
         settings = await SETTINGS_DB.find_one({"_id": guild_id})
         if not settings:
             await SETTINGS_DB.insert_one({"_id": guild_id})
@@ -282,18 +288,28 @@ async def get_settings(guild_id:int) -> dict[str, Any]:
     return settings
 
 async def update_settings(guild_id: int, data: dict[str, dict[str, Any]]) -> bool:
+    # Check if database is available
+    if SETTINGS_DB is None:
+        return False
+        
     settings = await get_settings(guild_id)
     return await update_db(SETTINGS_DB, settings, {"_id": guild_id}, data)
             
 async def get_user(user_id: int, d_type: Optional[str] = None, need_copy: bool = True) -> Dict[str, Any]:
     user = USERS_BUFFER.get(user_id)
     if not user:
-        user = await USERS_DB.find_one({"_id": user_id})
-        if not user:
+        # Check if database is available
+        if USERS_DB is None:
+            # Return default user data if no database connection
             user = {"_id": user_id, **USER_BASE}
-            await USERS_DB.insert_one(user)
-    
-        USERS_BUFFER[user_id] = user
+            USERS_BUFFER[user_id] = user
+        else:
+            user = await USERS_DB.find_one({"_id": user_id})
+            if not user:
+                user = {"_id": user_id, **USER_BASE}
+                await USERS_DB.insert_one(user)
+        
+            USERS_BUFFER[user_id] = user
         
     if d_type:
         user = user.setdefault(d_type, copy.deepcopy(USER_BASE.get(d_type)))
@@ -301,5 +317,9 @@ async def get_user(user_id: int, d_type: Optional[str] = None, need_copy: bool =
     return copy.deepcopy(user) if need_copy else user
 
 async def update_user(user_id:int, data:dict) -> bool:
+    # Check if database is available
+    if USERS_DB is None:
+        return False
+        
     playlist = await get_user(user_id, need_copy=False)
     return await update_db(USERS_DB, playlist, {"_id": user_id}, data)

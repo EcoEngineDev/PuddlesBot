@@ -88,8 +88,15 @@ class PuddlesBot(commands.Bot):
             return
             
         settings = music_func.settings
+        
+        # Initialize database variables to None by default
+        music_func.MONGO_DB = None
+        music_func.SETTINGS_DB = None
+        music_func.USERS_DB = None
+        
         if not ((db_name := settings.mongodb_name) and (db_url := settings.mongodb_url)):
             print("⚠️ MongoDB not configured for music system, skipping database connection")
+            print("   Music system will work without playlists and user data features")
             return
 
         try:
@@ -102,6 +109,11 @@ class PuddlesBot(commands.Bot):
             
         except Exception as e:
             print(f"⚠️ Music system MongoDB connection failed: {e}")
+            print("   Music system will work without playlists and user data features")
+            # Reset to None on connection failure
+            music_func.MONGO_DB = None
+            music_func.SETTINGS_DB = None
+            music_func.USERS_DB = None
     
     async def setup_vocard_music(self):
         """Set up Vocard music system"""
@@ -113,7 +125,7 @@ class PuddlesBot(commands.Bot):
             # Setup languages
             music_func.langs_setup()
             
-            # Connect to MongoDB
+            # Connect to MongoDB (optional)
             await self.connect_music_db()
             
             # Setup IPC client (optional)
@@ -126,33 +138,39 @@ class PuddlesBot(commands.Bot):
                     except Exception as e:
                         print(f"⚠️ IPC client connection failed: {e}")
             
-            # Setup Voicelink NodePool
+            # Setup Voicelink NodePool (using Vocard's approach)
             if voicelink and hasattr(music_func.settings, 'nodes'):
                 try:
-                    # Create nodes from settings
-                    nodes = []
-                    for node_name, node_config in music_func.settings.nodes.items():
-                        node = voicelink.Node(
-                            host=node_config['host'],
-                            port=node_config['port'],
-                            password=node_config['password'],
-                            secure=node_config.get('secure', False),
-                            identifier=node_config.get('identifier', node_name)
-                        )
-                        nodes.append(node)
+                    # Create a NodePool instance
+                    self.voicelink = voicelink.NodePool()
                     
-                    # Create node pool with the client
-                    await voicelink.NodePool.create_pool(self, nodes)
-                    print("✅ Voicelink NodePool created successfully")
+                    # Create nodes using the NodePool's create_node method
+                    for node_name, node_config in music_func.settings.nodes.items():
+                        try:
+                            await self.voicelink.create_node(
+                                bot=self,
+                                logger=music_func.logger,
+                                **node_config
+                            )
+                            print(f"✅ Connected to Lavalink node: {node_name}")
+                        except Exception as e:
+                            print(f"❌ Failed to connect to node {node_name}: {e}")
+                    
+                    print("✅ Voicelink NodePool setup completed")
                     
                 except Exception as e:
                     print(f"❌ Failed to setup Voicelink NodePool: {e}")
             
-            # Load Vocard cogs
+            # Load Vocard cogs (skip basic to avoid help command conflict)
             cogs_path = os.path.join(os.path.dirname(__file__), 'MusicSystem', 'cogs')
             if os.path.exists(cogs_path):
                 for module in os.listdir(cogs_path):
                     if module.endswith('.py') and not module.startswith('__'):
+                        # Skip basic cog to avoid help command conflict
+                        if module == 'basic.py':
+                            print("⚠️ Skipping basic cog to avoid help command conflict")
+                            continue
+                            
                         try:
                             # Change to MusicSystem directory context for cog loading
                             original_cwd = os.getcwd()
@@ -167,7 +185,7 @@ class PuddlesBot(commands.Bot):
                             
                         except Exception as e:
                             print(f"❌ Failed to load Vocard cog {module[:-3]}: {e}")
-                            if original_cwd:
+                            if 'original_cwd' in locals():
                                 os.chdir(original_cwd)
             
             print("✅ Vocard music system setup completed")

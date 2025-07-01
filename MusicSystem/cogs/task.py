@@ -55,7 +55,7 @@ class Task(commands.Cog):
 
             status_type = getattr(discord.Status, act_data.get("status", "").lower(), None)
 
-            if act_original.type != act_type or act_original.name != act_name:
+            if act_original is None or act_original.type != act_type or act_original.name != act_name:
                 self.bot.activity = discord.Activity(type=act_type, name=act_name)
                 await self.bot.change_presence(activity=self.bot.activity, status=status_type)
                 self.current_act = (self.current_act + 1) % len(func.settings.activity)
