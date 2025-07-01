@@ -11,6 +11,17 @@ import asyncio
 import logging
 from typing import Optional
 
+# Update music settings BEFORE importing music system components
+try:
+    from music_config import update_music_settings, validate_music_config
+    if validate_music_config():
+        update_music_settings()
+        print("✅ Music settings updated successfully")
+    else:
+        print("❌ Music configuration validation failed")
+except Exception as e:
+    print(f"❌ Failed to update music settings: {e}")
+
 # Add MusicSystem to the path so we can import from it
 sys.path.append(os.path.join(os.path.dirname(__file__), 'MusicSystem'))
 
@@ -18,13 +29,11 @@ try:
     import function as music_func
     from addons import Settings
     import voicelink
-    from MusicSystem.main import Vocard
 except ImportError as e:
     print(f"Warning: Could not import music system components: {e}")
     music_func = None
     Settings = None
     voicelink = None
-    Vocard = None
 
 # Global variables for the music system
 music_client = None
@@ -38,21 +47,14 @@ def setup_music_system(client):
     # Initialize music system settings
     if music_func and Settings:
         try:
-            # Update settings with environment variables
-            from music_config import update_music_settings, validate_music_config
-            
-            if validate_music_config():
-                update_music_settings()
-                
-                settings_path = os.path.join(os.path.dirname(__file__), 'MusicSystem', 'settings.json')
-                if os.path.exists(settings_path):
-                    music_settings = Settings(music_func.open_json("MusicSystem/settings.json"))
-                    music_func.settings = music_settings
-                    print("✅ Music system settings loaded successfully")
-                else:
-                    print("❌ Music system settings.json not found")
+            settings_path = os.path.join(os.path.dirname(__file__), 'MusicSystem', 'settings.json')
+            if os.path.exists(settings_path):
+                # Load settings directly using the path - open_json looks relative to ROOT_DIR
+                music_settings = Settings(music_func.open_json("settings.json"))
+                music_func.settings = music_settings
+                print("✅ Music system settings loaded successfully")
             else:
-                print("❌ Music system configuration validation failed")
+                print("❌ Music system settings.json not found")
         except Exception as e:
             print(f"❌ Failed to load music system settings: {e}")
 
