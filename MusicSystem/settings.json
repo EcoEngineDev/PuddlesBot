@@ -1,1 +1,186 @@
- 
+{
+    "token": "PLACEHOLDER_TOKEN",
+    "client_id": "PLACEHOLDER_CLIENT_ID",
+    "genius_token": "",
+    "mongodb_url": "",
+    "mongodb_name": "PuddlesBot_Music",
+    "nodes": {
+        "DEFAULT": {
+            "host": "lavalink.jirayu.net",
+            "port": 13592,
+            "password": "youshallnotpass",
+            "secure": false,
+            "identifier": "DEFAULT"
+        }   
+    },
+    "prefix": "?",
+    "activity": [
+        {"type": "listening", "name": "/help", "status": "online"}
+    ],
+    "logging": {
+        "file": {
+            "path": "./logs",
+            "enable": true
+        },
+        "level": {
+            "discord": "INFO",
+            "vocard": "INFO",
+            "ipc_client": "INFO"
+        },
+        "max-history": 30
+    },
+    "bot_access_user": [],
+    "embed_color":"0xb3b3b3",
+    "default_max_queue": 1000,
+    "lyrics_platform": "lrclib",
+    "audio_quality": {
+        "default_volume": 80,
+        "max_volume": 100,
+        "auto_quality": true,
+        "prefer_high_quality": true,
+        "buffer_size": 8000,
+        "skip_silence": false,
+        "normalize_audio": true,
+        "bass_boost": false,
+        "auto_reconnect": true,
+        "connection_timeout": 30000,
+        "playback_timeout": 10000
+    },
+    "invite_link": "https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=8&scope=bot%20applications.commands",
+    "server_invite_link": "https://discord.gg/your_server",
+    "ipc_client": {
+        "host": "127.0.0.1",
+        "port": 8000,
+        "password": "YOUR_PASSWORD",
+        "secure": false,
+        "enable": false
+    },
+    "sources_settings": {
+        "youtube": {
+            "emoji": "🎵",
+            "color": "0xFF0000"
+        },
+        "youtubemusic": {
+            "emoji": "🎵",
+            "color": "0xFF0000"
+        },
+        "spotify": {
+            "emoji": "🎧",
+            "color": "0x1DB954"
+        },
+        "soundcloud": {
+            "emoji": "🔗",
+            "color": "0xFF7700"
+        },
+        "twitch": {
+            "emoji": "📺",
+            "color": "0x9B4AFF"
+        },
+        "bandcamp": {
+            "emoji": "🎼",
+            "color": "0x6F98A7"
+        },
+        "vimeo": {
+            "emoji": "📹",
+            "color": "0x1ABCEA"
+        },
+        "applemusic": {
+            "emoji": "🍎",
+            "color": "0xE298C4"
+        },
+        "reddit": {
+            "emoji": "📱",
+            "color": "0xFF5700"
+        },
+        "tiktok": {
+            "emoji": "📱",
+            "color": "0x74ECE9"
+        },
+        "others": {
+            "emoji": "🔗",
+            "color": "0xb3b3b3"
+        }
+    },
+    "default_controller": {
+        "embeds": {
+            "active": {
+                "description": "**Now Playing: ```[@@track_name@@]```\nLink: [Click Me](@@track_url@@) | Requester: @@track_requester_mention@@ | DJ: @@dj@@**",
+                "footer": {
+                    "text": "Queue Length: @@queue_length@@ | Duration: @@track_duration@@ | Volume: @@volume@@% {{loop_mode != 'Off' ?? | Repeat: @@loop_mode@@}}"
+                },
+                "image": "@@track_thumbnail@@",
+                "author": {
+                    "name": "Music Controller | @@channel_name@@",
+                    "icon_url": "@@bot_icon@@"
+                },
+                "color": "@@track_color@@"
+            },
+            "inactive": {
+                "title": {
+                    "name": "There are no songs playing right now"
+                },
+                "description": "[Support](@@server_invite_link@@) | [Invite](@@invite_link@@) | Music system by Vocard",
+                "image": "https://i.imgur.com/dIFBwU7.png",
+                "color": "@@default_embed_color@@"
+            }
+        },
+        "default_buttons": [
+            ["back", "resume", "skip", {"stop": "red"}, "add"],
+            ["tracks"]
+        ],
+        "disableButtonText": false
+    },
+    "default_voice_status_template": "{{@@track_name@@ != 'None' ?? @@track_source_emoji@@ Now Playing: @@track_name@@ // Waiting for song requests}}",
+    "cooldowns": {
+        "connect": [2, 30],
+        "playlist view": [1, 30]
+    },
+    "performance": {
+        "enable_caching": true,
+        "cache_size": 100,
+        "preload_next_track": true,
+        "smooth_transitions": true,
+        "buffer_ahead_seconds": 8,
+        "quality_priority": "quality_over_speed",
+        "connection_pool_size": 10,
+        "retry_attempts": 3,
+        "retry_delay": 2000
+    },
+    "quality_presets": {
+        "ultra_high": {
+            "description": "Ultra High Quality (High CPU usage)",
+            "buffer_size": 12000,
+            "resampling": "HIGH",
+            "opus_quality": 10,
+            "prefer_lossless": true
+        },
+        "high": {
+            "description": "High Quality (Balanced)",
+            "buffer_size": 8000,
+            "resampling": "HIGH",
+            "opus_quality": 10,
+            "prefer_lossless": false
+        },
+        "balanced": {
+            "description": "Balanced Quality (Recommended)",
+            "buffer_size": 5000,
+            "resampling": "MEDIUM",
+            "opus_quality": 8,
+            "prefer_lossless": false
+        },
+        "performance": {
+            "description": "Performance Mode (Low CPU usage)",
+            "buffer_size": 3000,
+            "resampling": "LOW",
+            "opus_quality": 6,
+            "prefer_lossless": false
+        }
+    },
+    "current_preset": "high",
+    "aliases": {
+        "connect": ["join"],
+        "leave": ["stop", "bye"],
+        "play": ["p"],
+        "view": ["v"]
+    }
+} 

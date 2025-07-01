@@ -17,8 +17,23 @@ class QualityManager:
     def load_settings(self):
         """Load current settings from file"""
         try:
+            if not os.path.exists(self.settings_path):
+                print(f"⚠️ Settings file not found: {self.settings_path}")
+                self.settings = {}
+                return
+                
             with open(self.settings_path, 'r') as f:
-                self.settings = json.load(f)
+                content = f.read().strip()
+                if not content or content.isspace():
+                    print(f"⚠️ Settings file is empty: {self.settings_path}")
+                    self.settings = {}
+                    return
+                    
+                self.settings = json.loads(content)
+        except json.JSONDecodeError as e:
+            print(f"❌ Failed to parse quality settings JSON: {e}")
+            print("💡 Settings file may be corrupted. Using default settings.")
+            self.settings = {}
         except Exception as e:
             print(f"❌ Failed to load quality settings: {e}")
             self.settings = {}

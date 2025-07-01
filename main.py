@@ -30,22 +30,43 @@ from ticket_system import (
     InteractiveMessageView, ButtonSetupModal, TicketControlView
 )
 
-# Import Vocard music system components
-sys.path.append(os.path.join(os.path.dirname(__file__), 'MusicSystem'))
-try:
-    import function as music_func
-    from addons import Settings
-    import voicelink
-    from ipc import IPCClient
-    from motor.motor_asyncio import AsyncIOMotorClient
-    print("✅ Vocard music system components imported successfully")
-except ImportError as e:
-    print(f"❌ Failed to import Vocard components: {e}")
+# Music system configuration
+ENABLE_MUSIC_SYSTEM = False  # Set to False to disable music system temporarily
+
+# Try to import Vocard music system components only if enabled
+if ENABLE_MUSIC_SYSTEM:
+    try:
+        # Check if Vocard files exist and are valid
+        function_path = os.path.join('MusicSystem', 'function.py')
+        if not os.path.exists(function_path) or os.path.getsize(function_path) <= 5:
+            raise ImportError("Vocard function.py is missing or empty")
+        
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'MusicSystem'))
+        from MusicSystem import function as music_func
+        from MusicSystem.function import Settings
+        import voicelink
+        from addons.ipc_client import IPCClient
+        from motor.motor_asyncio import AsyncIOMotorClient
+        print("✅ Vocard music system components imported successfully")
+        MUSIC_AVAILABLE = True
+    except ImportError as e:
+        print(f"❌ Failed to import Vocard components: {e}")
+        print("💡 Music system files appear to be missing or corrupted.")
+        music_func = None
+        Settings = None
+        voicelink = None
+        IPCClient = None
+        AsyncIOMotorClient = None
+        MUSIC_AVAILABLE = False
+else:
+    print("🎵 Music system disabled - running in task-only mode")
+    print("💡 To enable music: Set ENABLE_MUSIC_SYSTEM = True and restore Vocard files")
     music_func = None
     Settings = None
     voicelink = None
     IPCClient = None
     AsyncIOMotorClient = None
+    MUSIC_AVAILABLE = False
 
 # Initialize bot with all intents
 class PuddlesBot(commands.Bot):
