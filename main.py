@@ -31,36 +31,28 @@ from ticket_system import (
 )
 
 # Music system configuration
-ENABLE_MUSIC_SYSTEM = False  # Set to False to disable music system temporarily
+ENABLE_MUSIC_SYSTEM = True  # Enable music system with fresh Vocard installation
 
-# Try to import Vocard music system components only if enabled
-if ENABLE_MUSIC_SYSTEM:
-    try:
-        # Check if Vocard files exist and are valid
-        function_path = os.path.join('MusicSystem', 'function.py')
-        if not os.path.exists(function_path) or os.path.getsize(function_path) <= 5:
-            raise ImportError("Vocard function.py is missing or empty")
-        
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'MusicSystem'))
-        from MusicSystem import function as music_func
-        from MusicSystem.function import Settings
-        import voicelink
-        from addons.ipc_client import IPCClient
-        from motor.motor_asyncio import AsyncIOMotorClient
-        print("✅ Vocard music system components imported successfully")
-        MUSIC_AVAILABLE = True
-    except ImportError as e:
-        print(f"❌ Failed to import Vocard components: {e}")
-        print("💡 Music system files appear to be missing or corrupted.")
-        music_func = None
-        Settings = None
-        voicelink = None
-        IPCClient = None
-        AsyncIOMotorClient = None
-        MUSIC_AVAILABLE = False
-else:
-    print("🎵 Music system disabled - running in task-only mode")
-    print("💡 To enable music: Set ENABLE_MUSIC_SYSTEM = True and restore Vocard files")
+# Import Vocard music system components
+try:
+    # Add MusicSystem to Python path
+    music_system_path = os.path.join(os.path.dirname(__file__), 'MusicSystem')
+    if music_system_path not in sys.path:
+        sys.path.insert(0, music_system_path)
+    
+    # Import Vocard components with correct paths
+    import function as music_func
+    from addons.settings import Settings
+    import voicelink
+    from ipc.client import IPCClient
+    from motor.motor_asyncio import AsyncIOMotorClient
+    
+    print("✅ Vocard music system components imported successfully")
+    MUSIC_AVAILABLE = True
+    
+except ImportError as e:
+    print(f"❌ Failed to import Vocard components: {e}")
+    print("💡 Music system will be disabled. Bot will run with task system only.")
     music_func = None
     Settings = None
     voicelink = None
@@ -145,8 +137,9 @@ class PuddlesBot(commands.Bot):
             return
             
         try:
-            # Setup languages
-            music_func.langs_setup()
+            # Setup languages if available
+            if hasattr(music_func, 'langs_setup'):
+                music_func.langs_setup()
             
             # Connect to MongoDB (optional)
             await self.connect_music_db()
@@ -164,6 +157,9 @@ class PuddlesBot(commands.Bot):
             # Setup Voicelink NodePool (using Vocard's approach)
             if voicelink and hasattr(music_func.settings, 'nodes'):
                 try:
+                    # Import Lavalink components
+                    import lavalink
+                    
                     # Create a NodePool instance
                     self.voicelink = voicelink.NodePool()
                     
@@ -172,10 +168,9 @@ class PuddlesBot(commands.Bot):
                         try:
                             await self.voicelink.create_node(
                                 bot=self,
-                                logger=music_func.logger,
                                 **node_config
                             )
-                            print(f"✅ Connected to Lavalink node: {node_name}")
+                            print(f"✅ Connected to Lavalink node: {node_name} ({node_config['host']}:{node_config['port']})")
                         except Exception as e:
                             print(f"❌ Failed to connect to node {node_name}: {e}")
                     
@@ -183,28 +178,30 @@ class PuddlesBot(commands.Bot):
                     
                 except Exception as e:
                     print(f"❌ Failed to setup Voicelink NodePool: {e}")
+                    print(f"   Full error: {traceback.format_exc()}")
             
             # Load Vocard cogs
             cogs_path = os.path.join(os.path.dirname(__file__), 'MusicSystem', 'cogs')
             if os.path.exists(cogs_path):
-                for module in os.listdir(cogs_path):
-                    if module.endswith('.py') and not module.startswith('__'):
-                        try:
-                            # Change to MusicSystem directory context for cog loading
-                            original_cwd = os.getcwd()
-                            music_system_path = os.path.join(os.path.dirname(__file__), 'MusicSystem')
-                            os.chdir(music_system_path)
-                            
-                            await self.load_extension(f"cogs.{module[:-3]}")
-                            print(f"✅ Loaded Vocard cog: {module[:-3]}")
-                            
-                            # Restore original directory
-                            os.chdir(original_cwd)
-                            
-                        except Exception as e:
-                            print(f"❌ Failed to load Vocard cog {module[:-3]}: {e}")
-                            if 'original_cwd' in locals():
-                                os.chdir(original_cwd)
+                original_cwd = os.getcwd()
+                try:
+                    # Change to MusicSystem directory context for cog loading
+                    music_system_path = os.path.join(os.path.dirname(__file__), 'MusicSystem')
+                    os.chdir(music_system_path)
+                    
+                    for module in os.listdir(cogs_path):
+                        if module.endswith('.py') and not module.startswith('__'):
+                            try:
+                                await self.load_extension(f"cogs.{module[:-3]}")
+                                print(f"✅ Loaded Vocard cog: {module[:-3]}")
+                            except Exception as e:
+                                print(f"❌ Failed to load Vocard cog {module[:-3]}: {e}")
+                    
+                except Exception as e:
+                    print(f"❌ Error loading cogs: {e}")
+                finally:
+                    # Always restore original directory
+                    os.chdir(original_cwd)
             
             print("✅ Vocard music system setup completed")
             
