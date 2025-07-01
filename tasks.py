@@ -797,6 +797,84 @@ def setup_task_commands(tree: app_commands.CommandTree):
             session.close()
 
     @tree.command(
+        name="oldtasks", 
+        description="View completed tasks for a specific user"
+    )
+    @app_commands.describe(
+        user="The user whose completed tasks you want to view"
+    )
+    @log_command
+    async def oldtasks(interaction: discord.Interaction, user: discord.Member):
+        session = get_session()
+        try:
+            # Get all completed tasks for the user
+            completed_tasks = session.query(Task).filter_by(
+                assigned_to=str(user.id),
+                server_id=str(interaction.guild_id),
+                completed=True
+            ).order_by(Task.completed_at.desc()).all()
+            
+            if not completed_tasks:
+                await interaction.response.send_message(
+                    f"{user.display_name} has no completed tasks!",
+                    ephemeral=True
+                )
+                return
+            
+            # Calculate statistics
+            total_completed = len(completed_tasks)
+            completed_late = 0
+            
+            for task in completed_tasks:
+                if task.completed_at and task.due_date:
+                    if task.completed_at > task.due_date:
+                        completed_late += 1
+            
+            completed_on_time = total_completed - completed_late
+            on_time_percentage = (completed_on_time / total_completed * 100) if total_completed > 0 else 0
+            
+            # Defer response since we might need time to fetch user data
+            await interaction.response.defer()
+            
+            # Pre-fetch creator information for each task
+            for task in completed_tasks:
+                try:
+                    creator = await _client.fetch_user(int(task.created_by)) if task.created_by != "0" else None
+                    task._creator_name = creator.display_name if creator else "Unknown"
+                except:
+                    task._creator_name = "Unknown"
+            
+            # Create statistics embed with paginated view
+            stats_text = (
+                f"**Statistics for {user.display_name}:**\n"
+                f"📋 Total Completed: **{total_completed}**\n"
+                f"✅ Completed On Time: **{completed_on_time}** ({on_time_percentage:.1f}%)\n"
+                f"⏰ Completed Late: **{completed_late}**\n\n"
+                f"*Use the buttons below to browse through completed tasks*"
+            )
+            
+            view = PaginatedCompletedTaskView(completed_tasks, user, stats_text, tasks_per_page=5)
+            embed = view.get_current_page_embed()
+            
+            await interaction.followup.send(embed=embed, view=view)
+            
+        except Exception as e:
+            print(f"Error in oldtasks command: {str(e)}")
+            print(traceback.format_exc())
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"An error occurred while fetching completed tasks: {str(e)}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    f"An error occurred while fetching completed tasks: {str(e)}",
+                    ephemeral=True
+                )
+        finally:
+            session.close()
+
+    @tree.command(
         name="alltasks",
         description="View all active tasks in the server (Admin only)"
     )
@@ -854,6 +932,125 @@ def setup_task_commands(tree: app_commands.CommandTree):
             session.close()
 
     print("✅ Task commands registered successfully")
+
+class PaginatedCompletedTaskView(discord.ui.View):
+    def __init__(self, tasks, user, stats_text, tasks_per_page=5):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.tasks = tasks
+        self.user = user
+        self.stats_text = stats_text
+        self.tasks_per_page = tasks_per_page
+        self.current_page = 0
+        self.total_pages = max(1, (len(tasks) + tasks_per_page - 1) // tasks_per_page)
+        
+        self.update_buttons()
+    
+    def update_buttons(self):
+        # Update Previous button
+        self.previous_button.disabled = (self.current_page == 0)
+        
+        # Update Next button  
+        self.next_button.disabled = (self.current_page >= self.total_pages - 1)
+    
+    def get_current_page_embed(self):
+        start_idx = self.current_page * self.tasks_per_page
+        end_idx = min(start_idx + self.tasks_per_page, len(self.tasks))
+        current_tasks = self.tasks[start_idx:end_idx]
+        
+        if len(self.tasks) == 0:
+            embed = discord.Embed(
+                title=f"Completed Tasks - {self.user.display_name}",
+                description="No completed tasks found.",
+                color=discord.Color.green()
+            )
+        else:
+            embed = discord.Embed(
+                title=f"Completed Tasks - {self.user.display_name}",
+                description=f"{self.stats_text}\n**Page {self.current_page + 1} of {self.total_pages}** • Showing {len(current_tasks)} of {len(self.tasks)} completed tasks",
+                color=discord.Color.green()
+            )
+            
+            for i, task in enumerate(current_tasks):
+                task_number = start_idx + i + 1
+                creator_name = getattr(task, '_creator_name', 'Unknown')
+                
+                # Format dates
+                due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
+                completed_date = task.completed_at.strftime('%Y-%m-%d %H:%M UTC') if task.completed_at else "Unknown"
+                
+                # Determine if completed late
+                status_emoji = "✅"
+                status_text = "On Time"
+                if task.completed_at and task.due_date and task.completed_at > task.due_date:
+                    status_emoji = "⏰"
+                    status_text = "Late"
+                    
+                    # Calculate how late
+                    time_diff = task.completed_at - task.due_date
+                    if time_diff.days > 0:
+                        late_info = f" ({time_diff.days} day{'s' if time_diff.days != 1 else ''} late)"
+                    else:
+                        hours_late = time_diff.seconds // 3600
+                        if hours_late > 0:
+                            late_info = f" ({hours_late} hour{'s' if hours_late != 1 else ''} late)"
+                        else:
+                            minutes_late = (time_diff.seconds // 60) % 60
+                            late_info = f" ({minutes_late} minute{'s' if minutes_late != 1 else ''} late)"
+                    status_text += late_info
+                
+                value = (
+                    f"**Status:** {status_emoji} {status_text}\n"
+                    f"**Created by:** {creator_name}\n"
+                    f"**Due:** {due_date}\n"
+                    f"**Completed:** {completed_date}\n"
+                    f"**Description:** {task.description[:100]}{'...' if len(task.description) > 100 else ''}"
+                )
+                embed.add_field(
+                    name=f"{task_number}. {task.name}", 
+                    value=value, 
+                    inline=False
+                )
+        
+        # Add footer with helpful info
+        embed.set_footer(text="✅ = Completed on time • ⏰ = Completed late")
+        return embed
+    
+    @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.secondary, disabled=True)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            embed = self.get_current_page_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+    
+    @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.update_buttons()
+            embed = self.get_current_page_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+    
+    @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.primary)
+    async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Refresh the current page
+        embed = self.get_current_page_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    @discord.ui.button(label="📊 Stats Only", style=discord.ButtonStyle.success)
+    async def stats_only_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Show just the statistics without pagination
+        embed = discord.Embed(
+            title=f"Task Statistics - {self.user.display_name}",
+            description=self.stats_text,
+            color=discord.Color.green()
+        )
+        embed.set_footer(text="Use 'Refresh' to go back to the full task list")
+        await interaction.response.edit_message(embed=embed, view=self)
 
 # Export the setup function
 __all__ = ['setup_tasks_system', 'setup_task_commands'] 
