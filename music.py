@@ -15,15 +15,15 @@ from typing import Optional
 sys.path.append(os.path.join(os.path.dirname(__file__), 'MusicSystem'))
 
 try:
-    import lavaplay
     import function as music_func
     from addons import Settings
+    import voicelink
     from MusicSystem.main import Vocard
 except ImportError as e:
     print(f"Warning: Could not import music system components: {e}")
-    lavaplay = None
     music_func = None
     Settings = None
+    voicelink = None
     Vocard = None
 
 # Global variables for the music system
@@ -81,27 +81,23 @@ async def initialize_music_components(client):
                 except Exception as e:
                     print(f"⚠️ MongoDB connection failed, music system will work without database: {e}")
         
-        # Initialize Lavaplay for music playback
-        if lavaplay and hasattr(music_settings, 'nodes'):
+        # Initialize Voicelink for music playback
+        if voicelink and hasattr(music_settings, 'nodes'):
             try:
-                # Create lavaplay client
-                lavalink_client = lavaplay.Lavalink()
-                
-                # Add nodes from settings
+                # Create nodes from settings
+                nodes = []
                 for node_name, node_config in music_settings.nodes.items():
-                    node = lavalink_client.create_node(
+                    node = voicelink.Node(
                         host=node_config['host'],
                         port=node_config['port'],
                         password=node_config['password'],
-                        user_id=client.user.id,
                         secure=node_config.get('secure', False),
                         identifier=node_config.get('identifier', node_name)
                     )
-                    await node.connect()
+                    nodes.append(node)
                 
-                # Store the lavalink client globally for use in commands
-                global lavalink_client
-                music_func.lavalink_client = lavalink_client
+                # Create node pool with the client
+                await voicelink.NodePool.create_pool(client, nodes)
                 
                 print("✅ Music system Lavalink nodes connected successfully")
                 return True
@@ -116,7 +112,7 @@ async def initialize_music_components(client):
 
 def setup_music_commands(tree):
     """Set up music commands in the command tree"""
-    if not music_func or not lavaplay:
+    if not music_func or not voicelink:
         return
     
     @tree.command(name="play", description="Play music from various sources (YouTube, Spotify, etc.)")
@@ -126,44 +122,38 @@ def setup_music_commands(tree):
         if not interaction.user.voice:
             return await interaction.response.send_message("❌ You need to be in a voice channel to use music commands!", ephemeral=True)
         
-        # Get lavalink client
-        lavalink_client = getattr(music_func, 'lavalink_client', None)
-        if not lavalink_client:
-            return await interaction.response.send_message("❌ Music system not properly initialized!", ephemeral=True)
-        
-        # Get or create player
-        player = lavalink_client.get_player(interaction.guild.id)
-        
-        # Connect to voice channel if not connected
-        if not player.is_connected:
+        # Connect to voice channel if not already connected
+        if not interaction.guild.voice_client:
             try:
-                await player.connect(interaction.user.voice.channel.id)
+                await interaction.user.voice.channel.connect(cls=voicelink.Player)
             except Exception as e:
                 return await interaction.response.send_message(f"❌ Failed to connect to voice channel: {e}", ephemeral=True)
+        
+        player = interaction.guild.voice_client
         
         await interaction.response.defer()
         
         try:
-            # Search for tracks
-            tracks = await player.auto_search_tracks(query)
+            # Search for tracks using Voicelink
+            tracks = await voicelink.NodePool.get_node().get_tracks(query, requester=interaction.user)
             
             if not tracks:
                 return await interaction.followup.send("❌ No tracks found for your query!")
             
-            if hasattr(tracks, '__iter__') and len(tracks) > 1:
-                # Handle multiple tracks/playlist
-                for track in tracks:
+            if isinstance(tracks, voicelink.Playlist):
+                # Handle playlist
+                for track in tracks.tracks:
                     player.queue.append(track)
-                await interaction.followup.send(f"✅ Added {len(tracks)} tracks to the queue!")
+                await interaction.followup.send(f"✅ Added playlist **{tracks.name}** with {len(tracks.tracks)} tracks to the queue!")
             else:
-                # Handle single track
-                track = tracks[0] if hasattr(tracks, '__iter__') else tracks
+                # Handle single track or search results
+                track = tracks[0]
                 player.queue.append(track)
                 await interaction.followup.send(f"✅ Added **{track.title}** to the queue!")
             
             # Start playing if not already playing
-            if not player.is_playing:
-                await player.play()
+            if not player.is_playing() and not player.is_paused():
+                await player.play(player.queue.get())
                 
         except Exception as e:
             await interaction.followup.send(f"❌ An error occurred: {e}")
@@ -171,16 +161,12 @@ def setup_music_commands(tree):
     @tree.command(name="skip", description="Skip the current song")
     async def skip(interaction: discord.Interaction):
         """Skip the current song"""
-        lavalink_client = getattr(music_func, 'lavalink_client', None)
-        if not lavalink_client:
-            return await interaction.response.send_message("❌ Music system not properly initialized!", ephemeral=True)
-        
-        player = lavalink_client.get_player(interaction.guild.id)
-        
-        if not player.is_connected:
+        if not interaction.guild.voice_client:
             return await interaction.response.send_message("❌ Bot is not connected to a voice channel!", ephemeral=True)
         
-        if not player.is_playing:
+        player = interaction.guild.voice_client
+        
+        if not player.is_playing():
             return await interaction.response.send_message("❌ No music is currently playing!", ephemeral=True)
         
         await player.skip()
@@ -189,70 +175,53 @@ def setup_music_commands(tree):
     @tree.command(name="stop", description="Stop music and disconnect from voice channel")
     async def stop(interaction: discord.Interaction):
         """Stop music and disconnect"""
-        lavalink_client = getattr(music_func, 'lavalink_client', None)
-        if not lavalink_client:
-            return await interaction.response.send_message("❌ Music system not properly initialized!", ephemeral=True)
-        
-        player = lavalink_client.get_player(interaction.guild.id)
-        
-        if not player.is_connected:
+        if not interaction.guild.voice_client:
             return await interaction.response.send_message("❌ Bot is not connected to a voice channel!", ephemeral=True)
         
+        player = interaction.guild.voice_client
         await player.disconnect()
         await interaction.response.send_message("⏹️ Stopped music and disconnected from voice channel!")
     
     @tree.command(name="pause", description="Pause the current song")
     async def pause(interaction: discord.Interaction):
         """Pause the current song"""
-        lavalink_client = getattr(music_func, 'lavalink_client', None)
-        if not lavalink_client:
-            return await interaction.response.send_message("❌ Music system not properly initialized!", ephemeral=True)
-        
-        player = lavalink_client.get_player(interaction.guild.id)
-        
-        if not player.is_connected:
+        if not interaction.guild.voice_client:
             return await interaction.response.send_message("❌ Bot is not connected to a voice channel!", ephemeral=True)
         
-        if not player.is_playing:
+        player = interaction.guild.voice_client
+        
+        if not player.is_playing():
             return await interaction.response.send_message("❌ No music is currently playing!", ephemeral=True)
         
-        if player.is_paused:
+        if player.is_paused():
             return await interaction.response.send_message("❌ Music is already paused!", ephemeral=True)
         
-        await player.pause(True)
+        await player.pause()
         await interaction.response.send_message("⏸️ Paused the current song!")
     
     @tree.command(name="resume", description="Resume the paused song")
     async def resume(interaction: discord.Interaction):
         """Resume the paused song"""
-        lavalink_client = getattr(music_func, 'lavalink_client', None)
-        if not lavalink_client:
-            return await interaction.response.send_message("❌ Music system not properly initialized!", ephemeral=True)
-        
-        player = lavalink_client.get_player(interaction.guild.id)
-        
-        if not player.is_connected:
+        if not interaction.guild.voice_client:
             return await interaction.response.send_message("❌ Bot is not connected to a voice channel!", ephemeral=True)
         
-        if not player.is_paused:
+        player = interaction.guild.voice_client
+        
+        if not player.is_paused():
             return await interaction.response.send_message("❌ Music is not paused!", ephemeral=True)
         
-        await player.pause(False)
+        await player.resume()
         await interaction.response.send_message("▶️ Resumed the current song!")
     
     @tree.command(name="queue", description="Show the current music queue")
     async def queue(interaction: discord.Interaction):
         """Show the current queue"""
-        lavalink_client = getattr(music_func, 'lavalink_client', None)
-        if not lavalink_client:
-            return await interaction.response.send_message("❌ Music system not properly initialized!", ephemeral=True)
-        
-        player = lavalink_client.get_player(interaction.guild.id)
-        
-        if not player.is_connected:
+        if not interaction.guild.voice_client:
             return await interaction.response.send_message("❌ Bot is not connected to a voice channel!", ephemeral=True)
         
-        if not player.queue:
+        player = interaction.guild.voice_client
+        
+        if player.queue.empty():
             return await interaction.response.send_message("❌ The queue is empty!", ephemeral=True)
         
         embed = discord.Embed(title="🎵 Music Queue", color=0x00ff00)
@@ -261,7 +230,7 @@ def setup_music_commands(tree):
             embed.add_field(name="🎵 Now Playing", value=f"**{player.current.title}**", inline=False)
         
         queue_list = []
-        for i, track in enumerate(player.queue[:10], 1):  # Show first 10 tracks
+        for i, track in enumerate(list(player.queue)[:10], 1):  # Show first 10 tracks
             queue_list.append(f"{i}. **{track.title}**")
         
         if queue_list:
@@ -276,32 +245,23 @@ def setup_music_commands(tree):
     @app_commands.describe(volume="Volume level (0-100)")
     async def volume(interaction: discord.Interaction, volume: int):
         """Set the music volume"""
-        lavalink_client = getattr(music_func, 'lavalink_client', None)
-        if not lavalink_client:
-            return await interaction.response.send_message("❌ Music system not properly initialized!", ephemeral=True)
-        
-        player = lavalink_client.get_player(interaction.guild.id)
-        
-        if not player.is_connected:
+        if not interaction.guild.voice_client:
             return await interaction.response.send_message("❌ Bot is not connected to a voice channel!", ephemeral=True)
         
         if not 0 <= volume <= 100:
             return await interaction.response.send_message("❌ Volume must be between 0 and 100!", ephemeral=True)
         
-        await player.volume(volume)
+        player = interaction.guild.voice_client
+        await player.set_volume(volume)
         await interaction.response.send_message(f"🔊 Set volume to {volume}%!")
     
     @tree.command(name="nowplaying", description="Show information about the currently playing song")
     async def nowplaying(interaction: discord.Interaction):
         """Show now playing information"""
-        lavalink_client = getattr(music_func, 'lavalink_client', None)
-        if not lavalink_client:
-            return await interaction.response.send_message("❌ Music system not properly initialized!", ephemeral=True)
-        
-        player = lavalink_client.get_player(interaction.guild.id)
-        
-        if not player.is_connected:
+        if not interaction.guild.voice_client:
             return await interaction.response.send_message("❌ Bot is not connected to a voice channel!", ephemeral=True)
+        
+        player = interaction.guild.voice_client
         
         if not player.current:
             return await interaction.response.send_message("❌ No music is currently playing!", ephemeral=True)

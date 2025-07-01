@@ -56,7 +56,7 @@ This server provides reliable Lavalink v4 service for music playback.
 
 ### Architecture
 - **Music Library:** Based on Vocard v2.7.1
-- **Lavalink Client:** lavaplay.py v1.0.17+
+- **Lavalink Client:** Vocard's native voicelink system
 - **Database:** MongoDB (optional, for playlists)
 - **Integration:** Modular system integrated with existing PuddlesBot
 

@@ -11,5 +11,4 @@ validators==0.18.2
 humanize==4.0.0
 beautifulsoup4==4.11.1
 psutil==5.9.8
-aiohttp==3.11.12
-lavaplay.py>=1.0.17 
+aiohttp==3.11.12 
