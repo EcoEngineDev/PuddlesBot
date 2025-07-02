@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -69,6 +69,54 @@ class TaskCreator(Base):
         sqlalchemy.UniqueConstraint('user_id', 'server_id', name='unique_user_server'),
     )
 
+# Leveling System Tables
+class UserLevel(Base):
+    __tablename__ = 'user_levels'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False)
+    guild_id = Column(String, nullable=False)
+    text_xp = Column(Integer, default=0)
+    voice_xp = Column(Integer, default=0)
+    text_level = Column(Integer, default=0)
+    voice_level = Column(Integer, default=0)
+    total_messages = Column(Integer, default=0)
+    total_voice_time = Column(Integer, default=0)  # in minutes
+    last_text_xp = Column(DateTime, nullable=True)
+    last_voice_update = Column(DateTime, nullable=True)
+    voice_join_time = Column(DateTime, nullable=True)
+    
+    def __repr__(self):
+        return f"<UserLevel(user_id='{self.user_id}', text_level={self.text_level}, voice_level={self.voice_level})>"
+
+class LevelSettings(Base):
+    __tablename__ = 'level_settings'
+    
+    id = Column(Integer, primary_key=True)
+    guild_id = Column(String, nullable=False, unique=True)
+    text_xp_enabled = Column(Boolean, default=True)
+    voice_xp_enabled = Column(Boolean, default=True)
+    text_xp_min = Column(Integer, default=15)
+    text_xp_max = Column(Integer, default=25)
+    voice_xp_rate = Column(Integer, default=10)  # XP per minute
+    text_cooldown = Column(Integer, default=60)  # seconds between XP gains
+    level_up_messages = Column(Boolean, default=True)
+    level_up_channel = Column(String, nullable=True)
+    no_xp_roles = Column(String, default="")  # comma-separated role IDs
+    no_xp_channels = Column(String, default="")  # comma-separated channel IDs
+    multiplier = Column(Float, default=1.0)
+    
+class LevelRewards(Base):
+    __tablename__ = 'level_rewards'
+    
+    id = Column(Integer, primary_key=True)
+    guild_id = Column(String, nullable=False)
+    role_id = Column(String, nullable=False)
+    text_level = Column(Integer, default=0)
+    voice_level = Column(Integer, default=0)
+    remove_previous = Column(Boolean, default=False)
+    dm_user = Column(Boolean, default=False)
+
 def init_db():
     """Initialize the database and create all tables"""
     global _is_initialized
@@ -92,7 +140,13 @@ def init_db():
                 try:
                     task_count = session.query(Task).count()
                     creator_count = session.query(TaskCreator).count()
-                    print(f"Database contains {task_count} tasks and {creator_count} task creators")
+                    user_level_count = session.query(UserLevel).count()
+                    level_settings_count = session.query(LevelSettings).count()
+                    level_rewards_count = session.query(LevelRewards).count()
+                    print(f"Database contains:")
+                    print(f"  • {task_count} tasks and {creator_count} task creators")
+                    print(f"  • {user_level_count} user levels across {level_settings_count} servers")
+                    print(f"  • {level_rewards_count} level rewards configured")
                 except:
                     print("Database tables created successfully")
                 finally:

@@ -121,6 +121,20 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
     
+    # Leveling System Commands
+    embed.add_field(
+        name="⭐ **Leveling System**",
+        value=(
+            "`/rank @user` - View rank card with XP progress bars and server ranking\n"
+            "`/top` - Display leaderboard by text, voice, or total XP\n"
+            "`/setxp @user` - **[Admin]** Set a user's text or voice XP\n"
+            "`/setlevel @user` - **[Admin]** Set a user's text or voice level\n"
+            "`/lvlreset @user` - **[Admin]** Reset a user's levels and XP data\n"
+            "`/lvlconfig` - **[Admin]** Configure XP rates, cooldowns, and server settings"
+        ),
+        inline=False
+    )
+    
     # Permission Legend
     embed.add_field(
         name="🔑 **Permission Legend**",
@@ -140,6 +154,7 @@ async def help_command(interaction: discord.Interaction):
             "• **Persistent Views** - Buttons work even after bot restarts\n"
             "• **Task Notifications** - Get DMs when tasks are due soon\n"
             "• **Optimized Performance** - Fast loading for all task commands (2-5 seconds)\n"
+            "• **Leveling System** - Dual XP tracking (text/voice) with anti-spam & anti-AFK\n"
             "• **Ticket System** - Create support tickets with custom questions\n"
             "• **Role Management** - Assign/remove roles with buttons\n"
             "• **Invite Tracking** - Track who joins through whose invites\n"

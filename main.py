@@ -25,6 +25,7 @@ import help
 import inviter
 import quality_manager
 import tasks
+import lvl  # Leveling system
 from ticket_system import (
     InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal, TicketControlView
@@ -219,6 +220,7 @@ class PuddlesBot(commands.Bot):
             help.setup_help_system(self)
             inviter.setup_inviter_system(self)
             tasks.setup_task_system(self)
+            lvl.setup_leveling_system(self)  # Leveling system
             
             # Register commands from non-music modules
             dice.setup_dice_commands(self.tree)
@@ -228,6 +230,7 @@ class PuddlesBot(commands.Bot):
             inviter.setup_inviter_commands(self.tree)
             quality_manager.setup_quality_commands(self.tree, self)
             tasks.setup_task_commands(self.tree)
+            lvl.setup_level_commands(self.tree)  # Leveling commands
             
             # Initialize Vocard music system
             await self.setup_vocard_music()
@@ -240,6 +243,7 @@ class PuddlesBot(commands.Bot):
             print("💬 Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
             print("🎲 Fun commands: /quack, /diceroll")
             print("📨 Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
+            print("⭐ Leveling commands: /rank, /top, /setxp, /setlevel, /lvlreset, /lvlconfig")
             print("🎵 Music commands: Available through Vocard cogs (/play, /skip, /pause, /resume, /stop, /queue, /volume, etc.)")
             print("🎛️ Audio quality commands: /quality, /audiostats")
             print("❓ Utility commands: /help")
@@ -317,8 +321,14 @@ class PuddlesBot(commands.Bot):
         await inviter.on_guild_join(guild)
     
     async def on_voice_state_update(self, member, before, after):
-        """Handle voice state updates - Vocard handles music-related voice events"""
-        pass
+        """Handle voice state updates - includes leveling XP tracking and Vocard music events"""
+        # Handle leveling voice XP tracking
+        try:
+            await lvl.handle_voice_state_update(member, before, after)
+        except Exception as e:
+            print(f"Error in leveling voice state handling: {e}")
+        
+        # Vocard handles music-related voice events automatically
 
     async def backup_database(self):
         """Create a backup of the database"""
@@ -694,6 +704,12 @@ class PuddlesBot(commands.Bot):
         except Exception as e:
             print(f"Error in intmsg message handling: {e}")
             print(traceback.format_exc())
+        
+        # Handle leveling XP from messages
+        try:
+            await lvl.handle_message_xp(message)
+        except Exception as e:
+            print(f"Error in leveling message handling: {e}")
             
         await self.process_commands(message)
 
