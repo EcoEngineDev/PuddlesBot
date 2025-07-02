@@ -47,25 +47,39 @@ class VoiceTracker:
         
     def user_joined_voice(self, guild_id: int, user_id: int, channel: discord.VoiceChannel):
         """Track when a user joins a voice channel"""
+        print(f"🎙️ VOICE JOIN: User {user_id} joined {channel.name} in guild {guild_id}")
+        print(f"   Channel members: {len(channel.members)} total")
+        
         if guild_id not in self.voice_sessions:
             self.voice_sessions[guild_id] = {}
             
         # Only track if there are other people in the channel (anti-AFK)
         if len(channel.members) > 1:
             self.voice_sessions[guild_id][user_id] = datetime.utcnow()
-            print(f"👥 Voice tracking started for {user_id} in guild {guild_id}")
+            print(f"   ✅ Voice tracking started for user {user_id} - {len(channel.members)} people in channel")
         else:
-            print(f"🚫 Not tracking voice for {user_id} - alone in channel")
+            print(f"   🚫 Not tracking voice for user {user_id} - alone in channel")
             
     def user_left_voice(self, guild_id: int, user_id: int) -> Optional[int]:
         """Calculate voice time when user leaves and award XP"""
+        print(f"🎙️ VOICE LEAVE: User {user_id} left voice in guild {guild_id}")
+        
         if guild_id in self.voice_sessions and user_id in self.voice_sessions[guild_id]:
             join_time = self.voice_sessions[guild_id][user_id]
             duration = (datetime.utcnow() - join_time).total_seconds() / 60  # minutes
             del self.voice_sessions[guild_id][user_id]
-            print(f"🎙️ Voice session ended for {user_id}: {duration:.1f} minutes")
-            return max(1, int(duration))  # At least 1 minute
-        return None
+            print(f"   Voice session duration: {duration:.1f} minutes")
+            if duration >= 1:
+                minutes_to_award = int(duration)
+                print(f"   ✅ Awarding {minutes_to_award} minutes of voice time")
+                return minutes_to_award
+            else:
+                print(f"   ⚠️ Session too short ({duration:.1f} min), not awarding XP")
+                return None
+        else:
+            print(f"   🚫 User {user_id} was not being tracked in guild {guild_id}")
+            print(f"   Current sessions: {list(self.voice_sessions.get(guild_id, {}).keys())}")
+            return None
         
     def user_moved_voice(self, guild_id: int, user_id: int, old_channel: Optional[discord.VoiceChannel], new_channel: Optional[discord.VoiceChannel]):
         """Handle when user moves between voice channels"""
@@ -81,16 +95,26 @@ class VoiceTracker:
             
     async def _award_voice_xp(self, guild_id: int, user_id: int, minutes: int):
         """Award voice XP for time spent in voice"""
+        print(f"🎙️ VOICE XP: Attempting to award {minutes} minutes to user {user_id} in guild {guild_id}")
+        
         session = get_session()
         try:
             # Get settings
             settings = session.query(LevelSettings).filter_by(guild_id=str(guild_id)).first()
-            if not settings or not settings.voice_xp_enabled:
+            if not settings:
+                print(f"   Creating new settings for guild {guild_id}")
+                settings = LevelSettings(guild_id=str(guild_id))
+                session.add(settings)
+                session.flush()
+                
+            if not settings.voice_xp_enabled:
+                print(f"   Voice XP disabled for guild {guild_id}")
                 return
                 
             # Calculate XP
             base_xp = minutes * settings.voice_xp_rate
             xp_to_award = int(base_xp * settings.multiplier)
+            print(f"   Voice XP calculation: {minutes} min * {settings.voice_xp_rate} rate * {settings.multiplier} multiplier = {xp_to_award} XP")
             
             # Get or create user level
             user_level = session.query(UserLevel).filter_by(
@@ -99,29 +123,46 @@ class VoiceTracker:
             ).first()
             
             if not user_level:
+                print(f"   Creating new user level record for user {user_id}")
                 user_level = UserLevel(
                     user_id=str(user_id),
-                    guild_id=str(guild_id)
+                    guild_id=str(guild_id),
+                    text_xp=0,
+                    voice_xp=0,
+                    text_level=0,
+                    voice_level=0,
+                    total_messages=0,
+                    total_voice_time=0
                 )
                 session.add(user_level)
+                session.flush()
                 
             # Award XP and update stats
             old_level = user_level.voice_level
+            old_xp = user_level.voice_xp
+            old_voice_time = user_level.total_voice_time
+            
             user_level.voice_xp += xp_to_award
             user_level.total_voice_time += minutes
             user_level.last_voice_update = datetime.utcnow()
             user_level.voice_level = calculate_level(user_level.voice_xp)
             
+            print(f"   Voice XP updated: {old_xp} -> {user_level.voice_xp}")
+            print(f"   Voice time updated: {old_voice_time} -> {user_level.total_voice_time} minutes")
+            print(f"   Voice level updated: {old_level} -> {user_level.voice_level}")
+            
             session.commit()
             
             # Check for level up
             if user_level.voice_level > old_level:
+                print(f"   🎉 Voice level up! {old_level} -> {user_level.voice_level}")
                 await self._handle_level_up(guild_id, user_id, old_level, user_level.voice_level, "voice")
                 
-            print(f"🎙️ Awarded {xp_to_award} voice XP to {user_id} (Level {user_level.voice_level})")
+            print(f"   ✅ Successfully awarded {xp_to_award} voice XP to user {user_id}")
             
         except Exception as e:
-            print(f"Error awarding voice XP: {e}")
+            print(f"❌ Error awarding voice XP: {e}")
+            print(f"   Full error: {traceback.format_exc()}")
             session.rollback()
         finally:
             session.close()
@@ -392,33 +433,53 @@ async def handle_voice_state_update(member: discord.Member, before: discord.Voic
     guild_id = member.guild.id
     user_id = member.id
     
-    # User left voice
-    if before.channel and not after.channel:
-        voice_time = voice_tracker.user_left_voice(guild_id, user_id)
-        if voice_time:
-            await voice_tracker._award_voice_xp(guild_id, user_id, voice_time)
-            
-    # User joined voice
-    elif not before.channel and after.channel:
-        voice_tracker.user_joined_voice(guild_id, user_id, after.channel)
-        
-    # User moved channels
-    elif before.channel != after.channel:
-        voice_tracker.user_moved_voice(guild_id, user_id, before.channel, after.channel)
-        
-    # User became alone or no longer alone
-    elif before.channel == after.channel and after.channel:
-        channel_members = len(after.channel.members)
-        
-        # If user is now alone, stop tracking
-        if channel_members == 1 and user_id in voice_tracker.voice_sessions.get(guild_id, {}):
+    # Debug voice state change
+    before_channel = before.channel.name if before.channel else "None"
+    after_channel = after.channel.name if after.channel else "None"
+    print(f"🔄 VOICE STATE: {member.name} ({user_id}) in {member.guild.name}")
+    print(f"   Before: {before_channel}")
+    print(f"   After: {after_channel}")
+    
+    try:
+        # User left voice completely
+        if before.channel and not after.channel:
+            print(f"   📤 User left voice completely")
             voice_time = voice_tracker.user_left_voice(guild_id, user_id)
             if voice_time:
                 await voice_tracker._award_voice_xp(guild_id, user_id, voice_time)
                 
-        # If user is no longer alone, start tracking
-        elif channel_members > 1 and user_id not in voice_tracker.voice_sessions.get(guild_id, {}):
+        # User joined voice from being disconnected
+        elif not before.channel and after.channel:
+            print(f"   📥 User joined voice from disconnected")
             voice_tracker.user_joined_voice(guild_id, user_id, after.channel)
+            
+        # User moved between channels
+        elif before.channel and after.channel and before.channel != after.channel:
+            print(f"   🔄 User moved between channels")
+            voice_tracker.user_moved_voice(guild_id, user_id, before.channel, after.channel)
+            
+        # User stayed in same channel but something changed (mute, deafen, etc.)
+        elif before.channel == after.channel and after.channel:
+            channel_members = len(after.channel.members)
+            print(f"   ⚡ Same channel state change - {channel_members} members in {after.channel.name}")
+            
+            # If user is now alone, stop tracking
+            if channel_members == 1 and user_id in voice_tracker.voice_sessions.get(guild_id, {}):
+                print(f"   🚫 User is now alone, stopping tracking")
+                voice_time = voice_tracker.user_left_voice(guild_id, user_id)
+                if voice_time:
+                    await voice_tracker._award_voice_xp(guild_id, user_id, voice_time)
+                    
+            # If user is no longer alone, start tracking
+            elif channel_members > 1 and user_id not in voice_tracker.voice_sessions.get(guild_id, {}):
+                print(f"   👥 User is no longer alone, starting tracking")
+                voice_tracker.user_joined_voice(guild_id, user_id, after.channel)
+            else:
+                print(f"   ➡️ No tracking change needed")
+                
+    except Exception as e:
+        print(f"❌ Error in voice state handling: {e}")
+        print(f"   Full error: {traceback.format_exc()}")
 
 # ============= COMMAND SETUP =============
 
@@ -929,17 +990,22 @@ def setup_level_commands(tree: app_commands.CommandTree):
                  finally:
              session.close()
     
-    @tree.command(
+        @tree.command(
         name="testxp",
         description="Test XP system by manually awarding XP (Admin only)"
     )
     @app_commands.describe(
         user="User to award test XP to",
+        type="Type of XP to award",
         amount="Amount of XP to award (optional, default 25)"
     )
+    @app_commands.choices(type=[
+        app_commands.Choice(name="Text XP", value="text"),
+        app_commands.Choice(name="Voice XP", value="voice"),
+    ])
     @app_commands.default_permissions(administrator=True)
     @log_command
-    async def testxp(interaction: discord.Interaction, user: discord.Member = None, amount: int = 25):
+    async def testxp(interaction: discord.Interaction, user: discord.Member = None, type: str = "text", amount: int = 25):
         target_user = user or interaction.user
         
         session = get_session()
@@ -971,33 +1037,44 @@ def setup_level_commands(tree: app_commands.CommandTree):
                 session.add(user_level)
                 session.flush()
                 
-            # Award XP
-            old_level = user_level.text_level
-            old_xp = user_level.text_xp
-            user_level.text_xp += amount
-            user_level.total_messages += 1
-            user_level.last_text_xp = datetime.utcnow()
-            user_level.text_level = calculate_level(user_level.text_xp)
+            # Award XP based on type
+            if type == "text":
+                old_level = user_level.text_level
+                old_xp = user_level.text_xp
+                user_level.text_xp += amount
+                user_level.total_messages += 1
+                user_level.last_text_xp = datetime.utcnow()
+                user_level.text_level = calculate_level(user_level.text_xp)
+                xp_type_name = "Text"
+            else:  # voice
+                old_level = user_level.voice_level
+                old_xp = user_level.voice_xp
+                user_level.voice_xp += amount
+                user_level.total_voice_time += 1  # Add 1 minute
+                user_level.last_voice_update = datetime.utcnow()
+                user_level.voice_level = calculate_level(user_level.voice_xp)
+                xp_type_name = "Voice"
             
             session.commit()
             
             embed = discord.Embed(
                 title="🧪 XP Test",
-                description=f"Awarded **{amount} XP** to {target_user.mention}",
+                description=f"Awarded **{amount} {xp_type_name} XP** to {target_user.mention}",
                 color=discord.Color.blue()
             )
             embed.add_field(
                 name="Results",
                 value=f"**Before:** {old_xp:,} XP (Level {old_level})\n"
-                      f"**After:** {user_level.text_xp:,} XP (Level {user_level.text_level})",
+                      f"**After:** {old_xp + amount:,} XP (Level {calculate_level(old_xp + amount)})",
                 inline=False
             )
             
             # Check for level up
-            if user_level.text_level > old_level:
+            new_level = calculate_level(old_xp + amount)
+            if new_level > old_level:
                 embed.add_field(
                     name="🎉 Level Up!",
-                    value=f"Level {old_level} → Level {user_level.text_level}",
+                    value=f"Level {old_level} → Level {new_level}",
                     inline=False
                 )
                 
@@ -1007,7 +1084,7 @@ def setup_level_commands(tree: app_commands.CommandTree):
                 _client.last_active_channel[interaction.guild_id] = interaction.channel
                 
                 await voice_tracker._handle_level_up(
-                    interaction.guild_id, target_user.id, old_level, user_level.text_level, "text"
+                    interaction.guild_id, target_user.id, old_level, new_level, type
                 )
                 
             await interaction.response.send_message(embed=embed)
@@ -1018,8 +1095,61 @@ def setup_level_commands(tree: app_commands.CommandTree):
                 ephemeral=True
             )
             session.rollback()
-                 finally:
-             session.close()
+        finally:
+            session.close()
+    
+    @tree.command(
+        name="testvoice",
+        description="Test voice XP by simulating voice time (Admin only)"
+    )
+    @app_commands.describe(
+        user="User to test voice XP for",
+        minutes="Minutes of voice time to simulate (default 5)"
+    )
+    @app_commands.default_permissions(administrator=True)
+    @log_command
+    async def testvoice(interaction: discord.Interaction, user: discord.Member = None, minutes: int = 5):
+        target_user = user or interaction.user
+        
+        try:
+            await interaction.response.defer()
+            
+            # Simulate voice XP award
+            await voice_tracker._award_voice_xp(interaction.guild_id, target_user.id, minutes)
+            
+            embed = discord.Embed(
+                title="🎙️ Voice XP Test",
+                description=f"Simulated **{minutes} minutes** of voice time for {target_user.mention}",
+                color=discord.Color.green()
+            )
+            
+            # Get updated user data
+            session = get_session()
+            try:
+                user_level = session.query(UserLevel).filter_by(
+                    user_id=str(target_user.id),
+                    guild_id=str(interaction.guild_id)
+                ).first()
+                
+                if user_level:
+                    embed.add_field(
+                        name="Current Voice Stats",
+                        value=f"**Voice XP:** {user_level.voice_xp:,}\n"
+                              f"**Voice Level:** {user_level.voice_level}\n"
+                              f"**Total Voice Time:** {user_level.total_voice_time} minutes",
+                        inline=False
+                    )
+                    
+            finally:
+                session.close()
+            
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Error testing voice XP: {str(e)}",
+                ephemeral=True
+            )
     
     @tree.command(
         name="debugxp",
@@ -1080,15 +1210,19 @@ def setup_level_commands(tree: app_commands.CommandTree):
             
             # User data
             if user_level:
-                last_xp_time = user_level.last_text_xp
-                time_since_last = "Never" if not last_xp_time else f"{int((datetime.utcnow() - last_xp_time).total_seconds())}s ago"
+                last_text_time = user_level.last_text_xp
+                last_voice_time = user_level.last_voice_update
+                text_time_since = "Never" if not last_text_time else f"{int((datetime.utcnow() - last_text_time).total_seconds())}s ago"
+                voice_time_since = "Never" if not last_voice_time else f"{int((datetime.utcnow() - last_voice_time).total_seconds())}s ago"
                 
                 embed.add_field(
                     name="👤 User Data",
-                    value=f"**Text XP:** {user_level.text_xp:,}\n"
-                          f"**Text Level:** {user_level.text_level}\n"
+                    value=f"**Text XP:** {user_level.text_xp:,} (Level {user_level.text_level})\n"
+                          f"**Voice XP:** {user_level.voice_xp:,} (Level {user_level.voice_level})\n"
                           f"**Messages:** {user_level.total_messages:,}\n"
-                          f"**Last XP:** {time_since_last}",
+                          f"**Voice Time:** {user_level.total_voice_time:,} min\n"
+                          f"**Last Text XP:** {text_time_since}\n"
+                          f"**Last Voice XP:** {voice_time_since}",
                     inline=False
                 )
             else:
@@ -1097,6 +1231,28 @@ def setup_level_commands(tree: app_commands.CommandTree):
                     value="No user data found (new user)",
                     inline=False
                 )
+                
+            # Voice tracking status
+            guild_sessions = voice_tracker.voice_sessions.get(interaction.guild_id, {})
+            if target_user.id in guild_sessions:
+                start_time = guild_sessions[target_user.id]
+                duration = (datetime.utcnow() - start_time).total_seconds() / 60
+                voice_status = f"✅ Currently tracked ({duration:.1f} min)"
+            else:
+                voice_status = "❌ Not currently tracked"
+                
+            voice_channel_info = "Not in voice"
+            if hasattr(target_user, 'voice') and target_user.voice and target_user.voice.channel:
+                channel = target_user.voice.channel
+                voice_channel_info = f"In {channel.name} ({len(channel.members)} members)"
+                
+            embed.add_field(
+                name="🎙️ Voice Status",
+                value=f"**Tracking:** {voice_status}\n"
+                      f"**Channel:** {voice_channel_info}\n"
+                      f"**Total tracked:** {len(guild_sessions)} users",
+                inline=False
+            )
             
             # Overall status
             overall_status = "✅ Ready to gain XP" if (can_get_xp and can_gain_now and not target_user.bot) else "❌ Cannot gain XP"

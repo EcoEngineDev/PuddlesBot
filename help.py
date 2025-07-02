@@ -132,6 +132,7 @@ async def help_command(interaction: discord.Interaction):
             "`/lvlreset @user` - **[Admin]** Reset a user's levels and XP data\n"
             "`/lvlconfig` - **[Admin]** Configure XP rates, cooldowns, and server settings\n"
             "`/testxp @user` - **[Admin]** Test XP system by manually awarding XP\n"
+            "`/testvoice @user` - **[Admin]** Test voice XP by simulating voice time\n"
             "`/debugxp @user` - **[Admin]** Debug XP system status for a user"
         ),
         inline=False
