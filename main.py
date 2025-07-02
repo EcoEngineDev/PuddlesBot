@@ -208,7 +208,7 @@ class PuddlesBot(commands.Bot):
         except Exception as e:
             print(f"❌ Failed to setup Vocard music system: {e}")
             print("Full error:", traceback.format_exc())
-     
+        
     async def setup_hook(self):
         print("Setting up bot modules...")
         try:
@@ -650,12 +650,12 @@ class PuddlesBot(commands.Bot):
             print(f"✅ Successfully refreshed {refreshed} interactive messages")
         else:
             print("ℹ️ No messages were refreshed")
-    
+
     async def on_message(self, message: discord.Message):
         """Handle messages - includes Vocard music request channel logic"""
         # Ignore messages from bots or DMs
         if message.author.bot or not message.guild:
-            return
+                return
 
         # Check if the bot is directly mentioned (Vocard functionality)
         if music_func and hasattr(music_func, 'settings') and self.user.id in message.raw_mentions and not message.mention_everyone:
@@ -679,11 +679,11 @@ class PuddlesBot(commands.Bot):
                                 elif message.attachments:
                                     for attachment in message.attachments:
                                         await cmd(ctx, query=attachment.url)
-                        except Exception as e:
+        except Exception as e:
                             await music_func.send(ctx, str(e), ephemeral=True)
-                        finally:
+    finally:
                             return await message.delete()
-            except Exception as e:
+    except Exception as e:
                 print(f"Error in music request channel handling: {e}")
         
         # Handle intmsg conversation messages
@@ -691,9 +691,9 @@ class PuddlesBot(commands.Bot):
             handled = await intmsg.handle_intmsg_message(message)
             if handled:
                 return  # Don't process as command if handled by intmsg
-        except Exception as e:
+    except Exception as e:
             print(f"Error in intmsg message handling: {e}")
-            print(traceback.format_exc())
+        print(traceback.format_exc())
             
         await self.process_commands(message)
 
@@ -708,4 +708,4 @@ client = PuddlesBot()
 keep_alive()
 
 # Start the bot with the token
-client.run(os.getenv('TOKEN'))
+client.run(os.getenv('TOKEN')) 

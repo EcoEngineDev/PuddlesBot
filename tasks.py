@@ -907,6 +907,32 @@ def setup_task_commands(tree: app_commands.CommandTree):
                 )
                 return
             
+            # Collect all unique creator IDs for tasks we'll display
+            display_tasks = tasks[:10]  # Limit to 10 tasks to avoid embed limits
+            creator_ids = set()
+            for task in display_tasks:
+                if task.created_by != "0":
+                    creator_ids.add(task.created_by)
+            
+            # Fetch all creators in parallel for better performance
+            user_cache = {}
+            if creator_ids:
+                async def fetch_user_safe(user_id):
+                    try:
+                        user = await _client.fetch_user(int(user_id))
+                        return user_id, user.display_name if user else "Unknown"
+                    except:
+                        return user_id, "Unknown"
+                
+                # Fetch all users concurrently
+                user_results = await asyncio.gather(*[fetch_user_safe(uid) for uid in creator_ids], return_exceptions=True)
+                
+                # Build user cache from results
+                for result in user_results:
+                    if isinstance(result, tuple):
+                        user_id, display_name = result
+                        user_cache[user_id] = display_name
+            
             embed = discord.Embed(
                 title=f"📋 Tasks for {target_user.display_name}",
                 description=f"Total pending tasks: {len(tasks)}",
@@ -914,7 +940,7 @@ def setup_task_commands(tree: app_commands.CommandTree):
             )
             embed.set_thumbnail(url=target_user.display_avatar.url)
             
-            for i, task in enumerate(tasks[:10]):  # Limit to 10 tasks to avoid embed limits
+            for i, task in enumerate(display_tasks):
                 due_date = task.due_date.strftime('%Y-%m-%d %H:%M UTC')
                 
                 # Calculate time remaining
@@ -926,12 +952,8 @@ def setup_task_commands(tree: app_commands.CommandTree):
                 else:
                     time_status = "⚠️ OVERDUE"
                 
-                # Get creator name
-                try:
-                    creator = await _client.fetch_user(int(task.created_by)) if task.created_by != "0" else None
-                    creator_name = creator.display_name if creator else "Unknown"
-                except:
-                    creator_name = "Unknown"
+                # Get creator name from cache
+                creator_name = user_cache.get(task.created_by, "Unknown") if task.created_by != "0" else "Unknown"
                 
                 value = (
                     f"**Due:** {due_date}\n"
@@ -980,16 +1002,39 @@ def setup_task_commands(tree: app_commands.CommandTree):
             # Defer the response since we might need time to fetch user data
             await interaction.response.defer()
             
-            # Pre-fetch user information and store it in task objects
+            # Collect all unique user IDs from tasks
+            user_ids = set()
             for task in tasks:
-                try:
-                    assigned_to = await _client.fetch_user(int(task.assigned_to))
-                    task._assigned_name = assigned_to.display_name if assigned_to else "Unknown"
-                    creator = await _client.fetch_user(int(task.created_by)) if task.created_by != "0" else None
-                    task._creator_name = creator.display_name if creator else "Unknown"
-                except:
-                    task._assigned_name = "Unknown"
-                    task._creator_name = "Unknown"
+                user_ids.add(task.assigned_to)
+                if task.created_by != "0":
+                    user_ids.add(task.created_by)
+            
+            # Fetch all users in parallel for much better performance
+            user_cache = {}
+            if user_ids:
+                async def fetch_user_safe(user_id):
+                    try:
+                        user = await _client.fetch_user(int(user_id))
+                        return user_id, user.display_name if user else "Unknown"
+                    except:
+                        return user_id, "Unknown"
+                
+                # Fetch all users concurrently
+                user_results = await asyncio.gather(*[fetch_user_safe(uid) for uid in user_ids], return_exceptions=True)
+                
+                # Build user cache from results
+                for result in user_results:
+                    if isinstance(result, tuple):
+                        user_id, display_name = result
+                        user_cache[user_id] = display_name
+                    else:
+                        # Handle exceptions by marking as Unknown
+                        continue
+            
+            # Assign names to tasks using the cache
+            for task in tasks:
+                task._assigned_name = user_cache.get(task.assigned_to, "Unknown")
+                task._creator_name = user_cache.get(task.created_by, "Unknown") if task.created_by != "0" else "Unknown"
             
             # Create paginated view
             view = PaginatedTaskView(tasks, tasks_per_page=5)
@@ -1056,13 +1101,34 @@ def setup_task_commands(tree: app_commands.CommandTree):
             # Defer the response since we might need time to fetch user data
             await interaction.response.defer()
             
-            # Pre-fetch user information and store it in task objects
+            # Collect all unique creator IDs from completed tasks
+            creator_ids = set()
             for task in completed_tasks:
-                try:
-                    creator = await _client.fetch_user(int(task.created_by)) if task.created_by != "0" else None
-                    task._creator_name = creator.display_name if creator else "Unknown"
-                except:
-                    task._creator_name = "Unknown"
+                if task.created_by != "0":
+                    creator_ids.add(task.created_by)
+            
+            # Fetch all creators in parallel for better performance
+            user_cache = {}
+            if creator_ids:
+                async def fetch_user_safe(user_id):
+                    try:
+                        user = await _client.fetch_user(int(user_id))
+                        return user_id, user.display_name if user else "Unknown"
+                    except:
+                        return user_id, "Unknown"
+                
+                # Fetch all users concurrently
+                user_results = await asyncio.gather(*[fetch_user_safe(uid) for uid in creator_ids], return_exceptions=True)
+                
+                # Build user cache from results
+                for result in user_results:
+                    if isinstance(result, tuple):
+                        user_id, display_name = result
+                        user_cache[user_id] = display_name
+            
+            # Assign creator names to tasks using the cache
+            for task in completed_tasks:
+                task._creator_name = user_cache.get(task.created_by, "Unknown") if task.created_by != "0" else "Unknown"
             
             # Create paginated view with statistics
             view = PaginatedCompletedTaskView(
