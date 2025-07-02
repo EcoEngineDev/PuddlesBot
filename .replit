@@ -8,14 +8,6 @@ channel = "stable-23_11"
 [deployment]
 run = ["sh", "-c", "python main.py"]
 
-[[ports]]
-localPort = 8080
-externalPort = 80
-
-[packager]
-language = "python3"
-ignoredPackages = ["unit_tests"]
-
 [packager.features]
 enabledForHosting = false
 packageSearch = true
