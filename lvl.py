@@ -36,9 +36,6 @@ def log_command(func):
                 )
     return wrapper
 
-# ============= DATABASE MODELS =============
-# Database models are imported from database.py
-
 # ============= VOICE TRACKING =============
 
 class VoiceTracker:
@@ -275,7 +272,7 @@ def create_progress_bar(current: int, maximum: int, length: int = 20) -> str:
         
     filled = int((current / maximum) * length)
     bar = "▓" * filled + "░" * (length - filled)
-    return bar
+    return bar 
 
 async def can_gain_text_xp(user_id: int, guild_id: int) -> bool:
     """Check if user can gain text XP (anti-spam)"""
@@ -324,106 +321,108 @@ async def should_give_xp(member: discord.Member, channel: discord.TextChannel) -
     finally:
         session.close()
 
-# ============= MAIN LEVELING LOGIC =============
+# ============= EVENT HANDLERS =============
 
 async def handle_message_xp(message: discord.Message):
     """Handle XP gain from messages"""
     if message.author.bot or not message.guild:
         return
         
+    print(f"💬 MESSAGE XP: Processing message from {message.author.name} ({message.author.id}) in {message.guild.name}")
+    
+    session = get_session()
     try:
-        # Debug: Print who sent the message
-        print(f"🎯 Processing XP for {message.author.name} (ID: {message.author.id}) in guild {message.guild.id}")
+        # Check permissions and cooldown
+        print(f"   Step 1: Checking permissions and cooldown")
+        can_get_xp = await should_give_xp(message.author, message.channel)
+        can_gain_now = await can_gain_text_xp(message.author.id, message.guild.id)
         
-        # Check if user should get XP
-        should_get_xp = await should_give_xp(message.author, message.channel)
-        print(f"   Should get XP: {should_get_xp}")
-        if not should_get_xp:
+        print(f"   Can get XP: {can_get_xp}")
+        print(f"   Can gain now (cooldown): {can_gain_now}")
+        
+        if not can_get_xp or not can_gain_now:
+            print(f"   ❌ Cannot gain XP - permissions: {can_get_xp}, cooldown: {can_gain_now}")
             return
             
-        # Check cooldown
-        can_gain = await can_gain_text_xp(message.author.id, message.guild.id)
-        print(f"   Can gain XP (cooldown check): {can_gain}")
-        if not can_gain:
+        # Get or create settings
+        print(f"   Step 2: Getting or creating settings")
+        settings = session.query(LevelSettings).filter_by(guild_id=str(message.guild.id)).first()
+        if not settings:
+            print(f"   Creating new settings for guild {message.guild.id}")
+            settings = LevelSettings(guild_id=str(message.guild.id))
+            session.add(settings)
+            session.flush()
+            
+        if not settings.text_xp_enabled:
+            print(f"   Text XP disabled for guild {message.guild.id}")
             return
             
-        session = get_session()
-        try:
-            # Get settings
-            settings = session.query(LevelSettings).filter_by(guild_id=str(message.guild.id)).first()
-            if not settings:
-                print(f"   Creating new settings for guild {message.guild.id}")
-                settings = LevelSettings(guild_id=str(message.guild.id))
-                session.add(settings)
-                session.flush()  # Flush to get the ID but don't commit yet
-                
-            if not settings.text_xp_enabled:
-                print(f"   Text XP disabled for guild {message.guild.id}")
-                return
-                
-            # Calculate XP
-            base_xp = random.randint(settings.text_xp_min, settings.text_xp_max)
-            xp_to_award = int(base_xp * settings.multiplier)
-            print(f"   XP to award: {xp_to_award} (base: {base_xp}, multiplier: {settings.multiplier})")
+        # Calculate XP to award
+        print(f"   Step 3: Calculating XP")
+        base_xp = random.randint(settings.text_xp_min, settings.text_xp_max)
+        xp_to_award = int(base_xp * settings.multiplier)
+        print(f"   Base XP: {base_xp}, Multiplier: {settings.multiplier}, Final XP: {xp_to_award}")
+        
+        # Get or create user level
+        print(f"   Step 4: Getting or creating user level")
+        user_level = session.query(UserLevel).filter_by(
+            user_id=str(message.author.id),
+            guild_id=str(message.guild.id)
+        ).first()
+        
+        if not user_level:
+            print(f"   Creating new user level record for user {message.author.id}")
+            user_level = UserLevel(
+                user_id=str(message.author.id),
+                guild_id=str(message.guild.id),
+                text_xp=0,
+                voice_xp=0,
+                text_level=0,
+                voice_level=0,
+                total_messages=0,
+                total_voice_time=0
+            )
+            session.add(user_level)
+            session.flush()
             
-            # Get or create user level
-            user_level = session.query(UserLevel).filter_by(
-                user_id=str(message.author.id), 
-                guild_id=str(message.guild.id)
-            ).first()
+        # Award XP
+        print(f"   Step 5: Awarding XP")
+        old_level = user_level.text_level
+        old_xp = user_level.text_xp
+        old_msg_count = user_level.total_messages
+        
+        user_level.text_xp += xp_to_award
+        user_level.total_messages += 1
+        user_level.last_text_xp = datetime.utcnow()
+        user_level.text_level = calculate_level(user_level.text_xp)
+        
+        print(f"   Text XP updated: {old_xp} -> {user_level.text_xp}")
+        print(f"   Message count updated: {old_msg_count} -> {user_level.total_messages}")
+        print(f"   Text level updated: {old_level} -> {user_level.text_level}")
+        
+        session.commit()
+        print(f"   ✅ Database committed successfully")
+        
+        # Check for level up
+        if user_level.text_level > old_level:
+            print(f"   🎉 Text level up! {old_level} -> {user_level.text_level}")
+            # Store the channel for level up messages
+            if not hasattr(_client, 'last_active_channel'):
+                _client.last_active_channel = {}
+            _client.last_active_channel[message.guild.id] = message.channel
             
-            if not user_level:
-                print(f"   Creating new user level record for {message.author.name}")
-                user_level = UserLevel(
-                    user_id=str(message.author.id),
-                    guild_id=str(message.guild.id),
-                    text_xp=0,
-                    voice_xp=0,
-                    text_level=0,
-                    voice_level=0,
-                    total_messages=0,
-                    total_voice_time=0
-                )
-                session.add(user_level)
-                session.flush()  # Flush to ensure the object exists
-                
-            # Award XP and update stats
-            old_level = user_level.text_level
-            old_xp = user_level.text_xp
-            user_level.text_xp += xp_to_award
-            user_level.total_messages += 1
-            user_level.last_text_xp = datetime.utcnow()
-            user_level.text_level = calculate_level(user_level.text_xp)
+            await voice_tracker._handle_level_up(
+                message.guild.id, message.author.id, old_level, user_level.text_level, "text"
+            )
             
-            print(f"   XP updated: {old_xp} -> {user_level.text_xp}, Level: {old_level} -> {user_level.text_level}")
-            
-            session.commit()
-            print(f"   ✅ Successfully awarded {xp_to_award} XP to {message.author.name}")
-            
-            # Check for level up
-            if user_level.text_level > old_level:
-                print(f"   🎉 Level up! {old_level} -> {user_level.text_level}")
-                # Store last active channel for level up messages
-                if not hasattr(_client, 'last_active_channel'):
-                    _client.last_active_channel = {}
-                _client.last_active_channel[message.guild.id] = message.channel
-                
-                await voice_tracker._handle_level_up(
-                    message.guild.id, message.author.id, old_level, user_level.text_level, "text"
-                )
-                
-        except Exception as e:
-            print(f"❌ Database error in handle_message_xp: {e}")
-            print(f"   Full error: {traceback.format_exc()}")
-            session.rollback()
-        finally:
-            session.close()
-            
+        print(f"   ✅ Successfully awarded {xp_to_award} text XP to {message.author.name}")
+        
     except Exception as e:
-        print(f"❌ General error in handle_message_xp: {e}")
+        print(f"❌ Error in handle_message_xp: {e}")
         print(f"   Full error: {traceback.format_exc()}")
-
-# ============= VOICE STATE HANDLERS =============
+        session.rollback()
+    finally:
+        session.close()
 
 async def handle_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     """Handle voice state changes for XP tracking"""
@@ -591,406 +590,61 @@ def setup_level_commands(tree: app_commands.CommandTree):
             
         finally:
             session.close()
-    
-    @tree.command(
-        name="top",
-        description="Display the top members by text, voice, or total XP"
-    )
-    @app_commands.describe(
-        type="Type of leaderboard to show",
-        timeframe="Timeframe for the leaderboard (future feature)"
-    )
-    @app_commands.choices(type=[
-        app_commands.Choice(name="Total XP", value="total"),
-        app_commands.Choice(name="Text XP", value="text"),
-        app_commands.Choice(name="Voice XP", value="voice"),
-    ])
-    @log_command
-    async def top(interaction: discord.Interaction, type: str = "total", timeframe: Optional[str] = None):
-        session = get_session()
-        try:
-            users = session.query(UserLevel).filter_by(guild_id=str(interaction.guild_id)).all()
-            
-            if not users:
-                await interaction.response.send_message(
-                    "No users have earned XP yet! Be the first to start chatting! 🎉",
-                    ephemeral=True
-                )
-                return
-                
-            # Sort users based on type
-            if type == "text":
-                sorted_users = sorted(users, key=lambda x: x.text_xp, reverse=True)
-                title = "💬 Top Text Levels"
-                xp_attr = "text_xp"
-                level_attr = "text_level"
-            elif type == "voice":
-                sorted_users = sorted(users, key=lambda x: x.voice_xp, reverse=True)
-                title = "🎙️ Top Voice Levels"
-                xp_attr = "voice_xp"
-                level_attr = "voice_level"
-            else:
-                sorted_users = sorted(users, key=lambda x: x.text_xp + x.voice_xp, reverse=True)
-                title = "🏆 Top Users (Total XP)"
-                xp_attr = None
-                level_attr = None
-                
-            # Take top 10
-            top_users = sorted_users[:10]
-            
-            embed = discord.Embed(
-                title=title,
-                description=f"Top users in **{interaction.guild.name}**",
-                color=discord.Color.gold()
-            )
-            
-            leaderboard_text = ""
-            for i, user_data in enumerate(top_users, 1):
-                try:
-                    member = interaction.guild.get_member(int(user_data.user_id))
-                    if not member:
-                        continue
-                        
-                    # Medal emojis for top 3
-                    medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
-                    
-                    if xp_attr:
-                        xp = getattr(user_data, xp_attr)
-                        level = getattr(user_data, level_attr)
-                        leaderboard_text += f"{medal} **{member.display_name}** - Level {level} ({xp:,} XP)\n"
-                    else:
-                        total_xp = user_data.text_xp + user_data.voice_xp
-                        total_level = max(user_data.text_level, user_data.voice_level)
-                        leaderboard_text += f"{medal} **{member.display_name}** - Level {total_level} ({total_xp:,} XP)\n"
-                        
-                except Exception as e:
-                    print(f"Error processing user {user_data.user_id}: {e}")
-                    continue
-                    
-            if not leaderboard_text:
-                leaderboard_text = "No active users found!"
-                
-            embed.description = leaderboard_text
-            embed.set_footer(text="Keep being active to climb the leaderboard! 🚀")
-            
-            await interaction.response.send_message(embed=embed)
-            
-        finally:
-            session.close()
 
-    # Admin commands for XP management
     @tree.command(
-        name="setxp",
-        description="Set a user's XP (Admin only)"
+        name="testvoice",
+        description="Test voice XP by simulating voice time (Admin only)"
     )
     @app_commands.describe(
-        user="User to modify",
-        type="Type of XP to set",
-        amount="Amount of XP to set"
+        user="User to test voice XP for",
+        minutes="Minutes of voice time to simulate (default 5)"
     )
-    @app_commands.choices(type=[
-        app_commands.Choice(name="Text XP", value="text"),
-        app_commands.Choice(name="Voice XP", value="voice"),
-    ])
     @app_commands.default_permissions(administrator=True)
     @log_command
-    async def setxp(interaction: discord.Interaction, user: discord.Member, type: str, amount: int):
-        if amount < 0:
-            await interaction.response.send_message("XP amount must be positive!", ephemeral=True)
-            return
-            
-        session = get_session()
-        try:
-            user_level = session.query(UserLevel).filter_by(
-                user_id=str(user.id),
-                guild_id=str(interaction.guild_id)
-            ).first()
-            
-            if not user_level:
-                user_level = UserLevel(
-                    user_id=str(user.id),
-                    guild_id=str(interaction.guild_id)
-                )
-                session.add(user_level)
-                
-            if type == "text":
-                user_level.text_xp = amount
-                user_level.text_level = calculate_level(amount)
-                xp_type_name = "Text"
-            else:
-                user_level.voice_xp = amount
-                user_level.voice_level = calculate_level(amount)
-                xp_type_name = "Voice"
-                
-            session.commit()
-            
-            embed = discord.Embed(
-                title="✅ XP Updated",
-                description=f"Set {user.mention}'s {xp_type_name} XP to **{amount:,}** (Level {calculate_level(amount)})",
-                color=discord.Color.green()
-            )
-            
-            await interaction.response.send_message(embed=embed)
-            
-        finally:
-            session.close()
-            
-    @tree.command(
-        name="setlevel",
-        description="Set a user's level (Admin only)"
-    )
-    @app_commands.describe(
-        user="User to modify",
-        type="Type of level to set",
-        level="Level to set"
-    )
-    @app_commands.choices(type=[
-        app_commands.Choice(name="Text Level", value="text"),
-        app_commands.Choice(name="Voice Level", value="voice"),
-    ])
-    @app_commands.default_permissions(administrator=True)
-    @log_command
-    async def setlevel(interaction: discord.Interaction, user: discord.Member, type: str, level: int):
-        if level < 0 or level > 100:
-            await interaction.response.send_message("Level must be between 0 and 100!", ephemeral=True)
-            return
-            
-        xp_amount = calculate_xp_for_level(level)
+    async def testvoice(interaction: discord.Interaction, user: discord.Member = None, minutes: int = 5):
+        target_user = user or interaction.user
         
-        session = get_session()
         try:
-            user_level = session.query(UserLevel).filter_by(
-                user_id=str(user.id),
-                guild_id=str(interaction.guild_id)
-            ).first()
+            await interaction.response.defer()
             
-            if not user_level:
-                user_level = UserLevel(
-                    user_id=str(user.id),
-                    guild_id=str(interaction.guild_id)
-                )
-                session.add(user_level)
-                
-            if type == "text":
-                user_level.text_xp = xp_amount
-                user_level.text_level = level
-                xp_type_name = "Text"
-            else:
-                user_level.voice_xp = xp_amount
-                user_level.voice_level = level
-                xp_type_name = "Voice"
-                
-            session.commit()
+            # Simulate voice XP award
+            await voice_tracker._award_voice_xp(interaction.guild_id, target_user.id, minutes)
             
             embed = discord.Embed(
-                title="✅ Level Updated",
-                description=f"Set {user.mention}'s {xp_type_name} Level to **{level}** ({xp_amount:,} XP)",
+                title="🎙️ Voice XP Test",
+                description=f"Simulated **{minutes} minutes** of voice time for {target_user.mention}",
                 color=discord.Color.green()
             )
             
-            await interaction.response.send_message(embed=embed)
-            
-        finally:
-            session.close()
-
-    # Additional admin commands for leveling management
-    @tree.command(
-        name="lvlreset",
-        description="Reset a user's levels and XP (Admin only)"
-    )
-    @app_commands.describe(
-        user="User to reset",
-        type="Type of data to reset"
-    )
-    @app_commands.choices(type=[
-        app_commands.Choice(name="All XP & Levels", value="all"),
-        app_commands.Choice(name="Text XP Only", value="text"),
-        app_commands.Choice(name="Voice XP Only", value="voice"),
-    ])
-    @app_commands.default_permissions(administrator=True)
-    @log_command
-    async def lvlreset(interaction: discord.Interaction, user: discord.Member, type: str = "all"):
-        session = get_session()
-        try:
-            user_level = session.query(UserLevel).filter_by(
-                user_id=str(user.id),
-                guild_id=str(interaction.guild_id)
-            ).first()
-            
-            if not user_level:
-                await interaction.response.send_message(
-                    f"{user.display_name} has no leveling data to reset!",
-                    ephemeral=True
-                )
-                return
-                
-            if type == "all":
-                user_level.text_xp = 0
-                user_level.voice_xp = 0
-                user_level.text_level = 0
-                user_level.voice_level = 0
-                user_level.total_messages = 0
-                user_level.total_voice_time = 0
-                reset_desc = "all XP and levels"
-            elif type == "text":
-                user_level.text_xp = 0
-                user_level.text_level = 0
-                user_level.total_messages = 0
-                reset_desc = "text XP and level"
-            else:  # voice
-                user_level.voice_xp = 0
-                user_level.voice_level = 0
-                user_level.total_voice_time = 0
-                reset_desc = "voice XP and level"
-                
-            session.commit()
-            
-            embed = discord.Embed(
-                title="🔄 Level Data Reset",
-                description=f"Reset {user.mention}'s {reset_desc}",
-                color=discord.Color.orange()
-            )
-            
-            await interaction.response.send_message(embed=embed)
-            
-        finally:
-            session.close()
-    
-    @tree.command(
-        name="lvlconfig",
-        description="Configure server leveling settings (Admin only)"
-    )
-    @app_commands.describe(
-        setting="Setting to view or configure",
-        value="New value for the setting (leave empty to view current)"
-    )
-    @app_commands.choices(setting=[
-        app_commands.Choice(name="View All Settings", value="view"),
-        app_commands.Choice(name="Text XP Min", value="text_xp_min"),
-        app_commands.Choice(name="Text XP Max", value="text_xp_max"),
-        app_commands.Choice(name="Voice XP Rate", value="voice_xp_rate"),
-        app_commands.Choice(name="Text Cooldown", value="text_cooldown"),
-        app_commands.Choice(name="XP Multiplier", value="multiplier"),
-        app_commands.Choice(name="Level Up Messages", value="level_up_messages"),
-    ])
-    @app_commands.default_permissions(administrator=True)
-    @log_command
-    async def lvlconfig(interaction: discord.Interaction, setting: str, value: Optional[str] = None):
-        session = get_session()
-        try:
-            # Get or create settings
-            settings = session.query(LevelSettings).filter_by(guild_id=str(interaction.guild_id)).first()
-            if not settings:
-                settings = LevelSettings(guild_id=str(interaction.guild_id))
-                session.add(settings)
-                session.commit()
-            
-            if setting == "view" or value is None:
-                # Show current settings
-                embed = discord.Embed(
-                    title="⚙️ Leveling System Configuration",
-                    description=f"Settings for **{interaction.guild.name}**",
-                    color=discord.Color.blue()
-                )
-                
-                embed.add_field(
-                    name="📝 Text XP Settings",
-                    value=f"**Min XP per message:** {settings.text_xp_min}\n"
-                          f"**Max XP per message:** {settings.text_xp_max}\n"
-                          f"**Cooldown:** {settings.text_cooldown} seconds",
-                    inline=True
-                )
-                
-                embed.add_field(
-                    name="🎙️ Voice XP Settings",
-                    value=f"**XP per minute:** {settings.voice_xp_rate}\n"
-                          f"**Voice XP enabled:** {'✅' if settings.voice_xp_enabled else '❌'}",
-                    inline=True
-                )
-                
-                embed.add_field(
-                    name="⚡ General Settings",
-                    value=f"**XP Multiplier:** {settings.multiplier}x\n"
-                          f"**Level up messages:** {'✅' if settings.level_up_messages else '❌'}\n"
-                          f"**Text XP enabled:** {'✅' if settings.text_xp_enabled else '❌'}",
-                    inline=True
-                )
-                
-                await interaction.response.send_message(embed=embed)
-                return
-            
-            # Update setting
+            # Get updated user data
+            session = get_session()
             try:
-                if setting == "text_xp_min":
-                    new_val = int(value)
-                    if new_val < 1 or new_val > 100:
-                        raise ValueError("Must be between 1 and 100")
-                    settings.text_xp_min = new_val
-                    desc = f"Text XP minimum set to {new_val}"
-                    
-                elif setting == "text_xp_max":
-                    new_val = int(value)
-                    if new_val < 1 or new_val > 100:
-                        raise ValueError("Must be between 1 and 100")
-                    settings.text_xp_max = new_val
-                    desc = f"Text XP maximum set to {new_val}"
-                    
-                elif setting == "voice_xp_rate":
-                    new_val = int(value)
-                    if new_val < 1 or new_val > 50:
-                        raise ValueError("Must be between 1 and 50")
-                    settings.voice_xp_rate = new_val
-                    desc = f"Voice XP rate set to {new_val} per minute"
-                    
-                elif setting == "text_cooldown":
-                    new_val = int(value)
-                    if new_val < 30 or new_val > 300:
-                        raise ValueError("Must be between 30 and 300 seconds")
-                    settings.text_cooldown = new_val
-                    desc = f"Text XP cooldown set to {new_val} seconds"
-                    
-                elif setting == "multiplier":
-                    new_val = float(value)
-                    if new_val < 0.1 or new_val > 5.0:
-                        raise ValueError("Must be between 0.1 and 5.0")
-                    settings.multiplier = new_val
-                    desc = f"XP multiplier set to {new_val}x"
-                    
-                elif setting == "level_up_messages":
-                    new_val = value.lower() in ('true', '1', 'yes', 'on', 'enable', 'enabled')
-                    settings.level_up_messages = new_val
-                    desc = f"Level up messages {'enabled' if new_val else 'disabled'}"
-                    
-                else:
-                    await interaction.response.send_message("Invalid setting!", ephemeral=True)
-                    return
-                    
-                session.commit()
+                user_level = session.query(UserLevel).filter_by(
+                    user_id=str(target_user.id),
+                    guild_id=str(interaction.guild_id)
+                ).first()
                 
-                embed = discord.Embed(
-                    title="✅ Setting Updated",
-                    description=desc,
-                    color=discord.Color.green()
-                )
-                
-                await interaction.response.send_message(embed=embed)
-                
-            except ValueError as e:
-                await interaction.response.send_message(
-                    f"❌ Invalid value: {str(e)}",
-                    ephemeral=True
-                )
-                
+                if user_level:
+                    embed.add_field(
+                        name="Current Voice Stats",
+                        value=f"**Voice XP:** {user_level.voice_xp:,}\n"
+                              f"**Voice Level:** {user_level.voice_level}\n"
+                              f"**Total Voice Time:** {user_level.total_voice_time} minutes",
+                        inline=False
+                    )
+                    
+            finally:
+                session.close()
+            
+            await interaction.followup.send(embed=embed)
+            
         except Exception as e:
-            print(f"Error in lvlconfig: {e}")
-            await interaction.response.send_message(
-                "An error occurred while updating settings.",
+            await interaction.followup.send(
+                f"❌ Error testing voice XP: {str(e)}",
                 ephemeral=True
             )
-                 finally:
-             session.close()
     
-        @tree.command(
+    @tree.command(
         name="testxp",
         description="Test XP system by manually awarding XP (Admin only)"
     )
@@ -1099,59 +753,6 @@ def setup_level_commands(tree: app_commands.CommandTree):
             session.close()
     
     @tree.command(
-        name="testvoice",
-        description="Test voice XP by simulating voice time (Admin only)"
-    )
-    @app_commands.describe(
-        user="User to test voice XP for",
-        minutes="Minutes of voice time to simulate (default 5)"
-    )
-    @app_commands.default_permissions(administrator=True)
-    @log_command
-    async def testvoice(interaction: discord.Interaction, user: discord.Member = None, minutes: int = 5):
-        target_user = user or interaction.user
-        
-        try:
-            await interaction.response.defer()
-            
-            # Simulate voice XP award
-            await voice_tracker._award_voice_xp(interaction.guild_id, target_user.id, minutes)
-            
-            embed = discord.Embed(
-                title="🎙️ Voice XP Test",
-                description=f"Simulated **{minutes} minutes** of voice time for {target_user.mention}",
-                color=discord.Color.green()
-            )
-            
-            # Get updated user data
-            session = get_session()
-            try:
-                user_level = session.query(UserLevel).filter_by(
-                    user_id=str(target_user.id),
-                    guild_id=str(interaction.guild_id)
-                ).first()
-                
-                if user_level:
-                    embed.add_field(
-                        name="Current Voice Stats",
-                        value=f"**Voice XP:** {user_level.voice_xp:,}\n"
-                              f"**Voice Level:** {user_level.voice_level}\n"
-                              f"**Total Voice Time:** {user_level.total_voice_time} minutes",
-                        inline=False
-                    )
-                    
-            finally:
-                session.close()
-            
-            await interaction.followup.send(embed=embed)
-            
-        except Exception as e:
-            await interaction.followup.send(
-                f"❌ Error testing voice XP: {str(e)}",
-                ephemeral=True
-            )
-    
-    @tree.command(
         name="debugxp",
         description="Debug XP system for a user (Admin only)"
     )
@@ -1196,7 +797,9 @@ def setup_level_commands(tree: app_commands.CommandTree):
                 embed.add_field(
                     name="⚙️ Server Settings",
                     value=f"**Text XP enabled:** {settings.text_xp_enabled}\n"
+                          f"**Voice XP enabled:** {settings.voice_xp_enabled}\n"
                           f"**XP range:** {settings.text_xp_min}-{settings.text_xp_max}\n"
+                          f"**Voice rate:** {settings.voice_xp_rate}/min\n"
                           f"**Cooldown:** {settings.text_cooldown}s\n"
                           f"**Multiplier:** {settings.multiplier}x",
                     inline=True
@@ -1267,6 +870,106 @@ def setup_level_commands(tree: app_commands.CommandTree):
         except Exception as e:
             await interaction.response.send_message(
                 f"❌ Error debugging XP: {str(e)}",
+                ephemeral=True
+            )
+        finally:
+            session.close()
+    
+    @tree.command(
+        name="lvlconfig",
+        description="Configure server leveling settings (Admin only)"
+    )
+    @app_commands.describe(
+        setting="Setting to view or configure",
+        value="New value for the setting (leave empty to view current)"
+    )
+    @app_commands.choices(setting=[
+        app_commands.Choice(name="View All Settings", value="view"),
+        app_commands.Choice(name="Voice XP Enabled", value="voice_xp_enabled"),
+        app_commands.Choice(name="Voice XP Rate", value="voice_xp_rate"),
+        app_commands.Choice(name="XP Multiplier", value="multiplier"),
+    ])
+    @app_commands.default_permissions(administrator=True)
+    @log_command
+    async def lvlconfig(interaction: discord.Interaction, setting: str, value: Optional[str] = None):
+        session = get_session()
+        try:
+            # Get or create settings
+            settings = session.query(LevelSettings).filter_by(guild_id=str(interaction.guild_id)).first()
+            if not settings:
+                settings = LevelSettings(guild_id=str(interaction.guild_id))
+                session.add(settings)
+                session.commit()
+            
+            if setting == "view" or value is None:
+                # Show current settings
+                embed = discord.Embed(
+                    title="⚙️ Leveling System Configuration",
+                    description=f"Settings for **{interaction.guild.name}**",
+                    color=discord.Color.blue()
+                )
+                
+                embed.add_field(
+                    name="🎙️ Voice XP Settings",
+                    value=f"**Voice XP enabled:** {'✅' if settings.voice_xp_enabled else '❌'}\n"
+                          f"**XP per minute:** {settings.voice_xp_rate}",
+                    inline=True
+                )
+                
+                embed.add_field(
+                    name="⚡ General Settings",
+                    value=f"**XP Multiplier:** {settings.multiplier}x",
+                    inline=True
+                )
+                
+                await interaction.response.send_message(embed=embed)
+                return
+            
+            # Update setting
+            try:
+                if setting == "voice_xp_enabled":
+                    new_val = value.lower() in ('true', '1', 'yes', 'on', 'enable', 'enabled')
+                    settings.voice_xp_enabled = new_val
+                    desc = f"Voice XP {'enabled' if new_val else 'disabled'}"
+                    
+                elif setting == "voice_xp_rate":
+                    new_val = int(value)
+                    if new_val < 1 or new_val > 50:
+                        raise ValueError("Must be between 1 and 50")
+                    settings.voice_xp_rate = new_val
+                    desc = f"Voice XP rate set to {new_val} per minute"
+                    
+                elif setting == "multiplier":
+                    new_val = float(value)
+                    if new_val < 0.1 or new_val > 5.0:
+                        raise ValueError("Must be between 0.1 and 5.0")
+                    settings.multiplier = new_val
+                    desc = f"XP multiplier set to {new_val}x"
+                    
+                else:
+                    await interaction.response.send_message("Invalid setting!", ephemeral=True)
+                    return
+                    
+                session.commit()
+                
+                embed = discord.Embed(
+                    title="✅ Setting Updated",
+                    description=desc,
+                    color=discord.Color.green()
+                )
+                
+                await interaction.response.send_message(embed=embed)
+                
+            except ValueError as e:
+                await interaction.response.send_message(
+                    f"❌ Invalid value: {str(e)}",
+                    ephemeral=True
+                )
+                
+        except Exception as e:
+            print(f"Error in lvlconfig: {e}")
+            await interaction.response.send_message(
+                "An error occurred while updating settings.",
                 ephemeral=True
             )
         finally:
