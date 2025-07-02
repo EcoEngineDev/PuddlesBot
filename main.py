@@ -655,7 +655,7 @@ class PuddlesBot(commands.Bot):
         """Handle messages - includes Vocard music request channel logic"""
         # Ignore messages from bots or DMs
         if message.author.bot or not message.guild:
-                return
+            return
 
         # Check if the bot is directly mentioned (Vocard functionality)
         if music_func and hasattr(music_func, 'settings') and self.user.id in message.raw_mentions and not message.mention_everyone:
@@ -679,11 +679,11 @@ class PuddlesBot(commands.Bot):
                                 elif message.attachments:
                                     for attachment in message.attachments:
                                         await cmd(ctx, query=attachment.url)
-        except Exception as e:
+                        except Exception as e:
                             await music_func.send(ctx, str(e), ephemeral=True)
-    finally:
+                        finally:
                             return await message.delete()
-    except Exception as e:
+            except Exception as e:
                 print(f"Error in music request channel handling: {e}")
         
         # Handle intmsg conversation messages
@@ -691,9 +691,9 @@ class PuddlesBot(commands.Bot):
             handled = await intmsg.handle_intmsg_message(message)
             if handled:
                 return  # Don't process as command if handled by intmsg
-    except Exception as e:
+        except Exception as e:
             print(f"Error in intmsg message handling: {e}")
-        print(traceback.format_exc())
+            print(traceback.format_exc())
             
         await self.process_commands(message)
 
