@@ -290,68 +290,97 @@ async def handle_message_xp(message: discord.Message):
     if message.author.bot or not message.guild:
         return
         
-    # Check if user should get XP
-    if not await should_give_xp(message.author, message.channel):
-        return
-        
-    # Check cooldown
-    if not await can_gain_text_xp(message.author.id, message.guild.id):
-        return
-        
-    session = get_session()
     try:
-        # Get settings
-        settings = session.query(LevelSettings).filter_by(guild_id=str(message.guild.id)).first()
-        if not settings:
-            settings = LevelSettings(guild_id=str(message.guild.id))
-            session.add(settings)
-            session.commit()
-            
-        if not settings.text_xp_enabled:
+        # Debug: Print who sent the message
+        print(f"🎯 Processing XP for {message.author.name} (ID: {message.author.id}) in guild {message.guild.id}")
+        
+        # Check if user should get XP
+        should_get_xp = await should_give_xp(message.author, message.channel)
+        print(f"   Should get XP: {should_get_xp}")
+        if not should_get_xp:
             return
             
-        # Calculate XP
-        base_xp = random.randint(settings.text_xp_min, settings.text_xp_max)
-        xp_to_award = int(base_xp * settings.multiplier)
-        
-        # Get or create user level
-        user_level = session.query(UserLevel).filter_by(
-            user_id=str(message.author.id), 
-            guild_id=str(message.guild.id)
-        ).first()
-        
-        if not user_level:
-            user_level = UserLevel(
-                user_id=str(message.author.id),
+        # Check cooldown
+        can_gain = await can_gain_text_xp(message.author.id, message.guild.id)
+        print(f"   Can gain XP (cooldown check): {can_gain}")
+        if not can_gain:
+            return
+            
+        session = get_session()
+        try:
+            # Get settings
+            settings = session.query(LevelSettings).filter_by(guild_id=str(message.guild.id)).first()
+            if not settings:
+                print(f"   Creating new settings for guild {message.guild.id}")
+                settings = LevelSettings(guild_id=str(message.guild.id))
+                session.add(settings)
+                session.flush()  # Flush to get the ID but don't commit yet
+                
+            if not settings.text_xp_enabled:
+                print(f"   Text XP disabled for guild {message.guild.id}")
+                return
+                
+            # Calculate XP
+            base_xp = random.randint(settings.text_xp_min, settings.text_xp_max)
+            xp_to_award = int(base_xp * settings.multiplier)
+            print(f"   XP to award: {xp_to_award} (base: {base_xp}, multiplier: {settings.multiplier})")
+            
+            # Get or create user level
+            user_level = session.query(UserLevel).filter_by(
+                user_id=str(message.author.id), 
                 guild_id=str(message.guild.id)
-            )
-            session.add(user_level)
+            ).first()
             
-        # Award XP and update stats
-        old_level = user_level.text_level
-        user_level.text_xp += xp_to_award
-        user_level.total_messages += 1
-        user_level.last_text_xp = datetime.utcnow()
-        user_level.text_level = calculate_level(user_level.text_xp)
-        
-        session.commit()
-        
-        # Check for level up
-        if user_level.text_level > old_level:
-            # Store last active channel for level up messages
-            if not hasattr(_client, 'last_active_channel'):
-                _client.last_active_channel = {}
-            _client.last_active_channel[message.guild.id] = message.channel
+            if not user_level:
+                print(f"   Creating new user level record for {message.author.name}")
+                user_level = UserLevel(
+                    user_id=str(message.author.id),
+                    guild_id=str(message.guild.id),
+                    text_xp=0,
+                    voice_xp=0,
+                    text_level=0,
+                    voice_level=0,
+                    total_messages=0,
+                    total_voice_time=0
+                )
+                session.add(user_level)
+                session.flush()  # Flush to ensure the object exists
+                
+            # Award XP and update stats
+            old_level = user_level.text_level
+            old_xp = user_level.text_xp
+            user_level.text_xp += xp_to_award
+            user_level.total_messages += 1
+            user_level.last_text_xp = datetime.utcnow()
+            user_level.text_level = calculate_level(user_level.text_xp)
             
-            await voice_tracker._handle_level_up(
-                message.guild.id, message.author.id, old_level, user_level.text_level, "text"
-            )
+            print(f"   XP updated: {old_xp} -> {user_level.text_xp}, Level: {old_level} -> {user_level.text_level}")
+            
+            session.commit()
+            print(f"   ✅ Successfully awarded {xp_to_award} XP to {message.author.name}")
+            
+            # Check for level up
+            if user_level.text_level > old_level:
+                print(f"   🎉 Level up! {old_level} -> {user_level.text_level}")
+                # Store last active channel for level up messages
+                if not hasattr(_client, 'last_active_channel'):
+                    _client.last_active_channel = {}
+                _client.last_active_channel[message.guild.id] = message.channel
+                
+                await voice_tracker._handle_level_up(
+                    message.guild.id, message.author.id, old_level, user_level.text_level, "text"
+                )
+                
+        except Exception as e:
+            print(f"❌ Database error in handle_message_xp: {e}")
+            print(f"   Full error: {traceback.format_exc()}")
+            session.rollback()
+        finally:
+            session.close()
             
     except Exception as e:
-        print(f"Error handling message XP: {e}")
-        session.rollback()
-    finally:
-        session.close()
+        print(f"❌ General error in handle_message_xp: {e}")
+        print(f"   Full error: {traceback.format_exc()}")
 
 # ============= VOICE STATE HANDLERS =============
 
@@ -895,6 +924,193 @@ def setup_level_commands(tree: app_commands.CommandTree):
             print(f"Error in lvlconfig: {e}")
             await interaction.response.send_message(
                 "An error occurred while updating settings.",
+                ephemeral=True
+            )
+                 finally:
+             session.close()
+    
+    @tree.command(
+        name="testxp",
+        description="Test XP system by manually awarding XP (Admin only)"
+    )
+    @app_commands.describe(
+        user="User to award test XP to",
+        amount="Amount of XP to award (optional, default 25)"
+    )
+    @app_commands.default_permissions(administrator=True)
+    @log_command
+    async def testxp(interaction: discord.Interaction, user: discord.Member = None, amount: int = 25):
+        target_user = user or interaction.user
+        
+        session = get_session()
+        try:
+            # Get or create settings
+            settings = session.query(LevelSettings).filter_by(guild_id=str(interaction.guild_id)).first()
+            if not settings:
+                settings = LevelSettings(guild_id=str(interaction.guild_id))
+                session.add(settings)
+                session.flush()
+                
+            # Get or create user level
+            user_level = session.query(UserLevel).filter_by(
+                user_id=str(target_user.id),
+                guild_id=str(interaction.guild_id)
+            ).first()
+            
+            if not user_level:
+                user_level = UserLevel(
+                    user_id=str(target_user.id),
+                    guild_id=str(interaction.guild_id),
+                    text_xp=0,
+                    voice_xp=0,
+                    text_level=0,
+                    voice_level=0,
+                    total_messages=0,
+                    total_voice_time=0
+                )
+                session.add(user_level)
+                session.flush()
+                
+            # Award XP
+            old_level = user_level.text_level
+            old_xp = user_level.text_xp
+            user_level.text_xp += amount
+            user_level.total_messages += 1
+            user_level.last_text_xp = datetime.utcnow()
+            user_level.text_level = calculate_level(user_level.text_xp)
+            
+            session.commit()
+            
+            embed = discord.Embed(
+                title="🧪 XP Test",
+                description=f"Awarded **{amount} XP** to {target_user.mention}",
+                color=discord.Color.blue()
+            )
+            embed.add_field(
+                name="Results",
+                value=f"**Before:** {old_xp:,} XP (Level {old_level})\n"
+                      f"**After:** {user_level.text_xp:,} XP (Level {user_level.text_level})",
+                inline=False
+            )
+            
+            # Check for level up
+            if user_level.text_level > old_level:
+                embed.add_field(
+                    name="🎉 Level Up!",
+                    value=f"Level {old_level} → Level {user_level.text_level}",
+                    inline=False
+                )
+                
+                # Trigger level up message
+                if not hasattr(_client, 'last_active_channel'):
+                    _client.last_active_channel = {}
+                _client.last_active_channel[interaction.guild_id] = interaction.channel
+                
+                await voice_tracker._handle_level_up(
+                    interaction.guild_id, target_user.id, old_level, user_level.text_level, "text"
+                )
+                
+            await interaction.response.send_message(embed=embed)
+            
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Error testing XP: {str(e)}",
+                ephemeral=True
+            )
+            session.rollback()
+                 finally:
+             session.close()
+    
+    @tree.command(
+        name="debugxp",
+        description="Debug XP system for a user (Admin only)"
+    )
+    @app_commands.describe(user="User to debug")
+    @app_commands.default_permissions(administrator=True)
+    @log_command
+    async def debugxp(interaction: discord.Interaction, user: discord.Member = None):
+        target_user = user or interaction.user
+        
+        session = get_session()
+        try:
+            # Check various conditions
+            can_get_xp = await should_give_xp(target_user, interaction.channel)
+            can_gain_now = await can_gain_text_xp(target_user.id, interaction.guild_id)
+            
+            # Get settings
+            settings = session.query(LevelSettings).filter_by(guild_id=str(interaction.guild_id)).first()
+            
+            # Get user level
+            user_level = session.query(UserLevel).filter_by(
+                user_id=str(target_user.id),
+                guild_id=str(interaction.guild_id)
+            ).first()
+            
+            embed = discord.Embed(
+                title="🔍 XP System Debug",
+                description=f"Debug info for {target_user.mention}",
+                color=discord.Color.blue()
+            )
+            
+            # Basic checks
+            embed.add_field(
+                name="🚦 Basic Checks",
+                value=f"**Is bot:** {target_user.bot}\n"
+                      f"**Can get XP:** {can_get_xp}\n"
+                      f"**Can gain now (cooldown):** {can_gain_now}",
+                inline=True
+            )
+            
+            # Settings info
+            if settings:
+                embed.add_field(
+                    name="⚙️ Server Settings",
+                    value=f"**Text XP enabled:** {settings.text_xp_enabled}\n"
+                          f"**XP range:** {settings.text_xp_min}-{settings.text_xp_max}\n"
+                          f"**Cooldown:** {settings.text_cooldown}s\n"
+                          f"**Multiplier:** {settings.multiplier}x",
+                    inline=True
+                )
+            else:
+                embed.add_field(
+                    name="⚙️ Server Settings",
+                    value="No settings found (will use defaults)",
+                    inline=True
+                )
+            
+            # User data
+            if user_level:
+                last_xp_time = user_level.last_text_xp
+                time_since_last = "Never" if not last_xp_time else f"{int((datetime.utcnow() - last_xp_time).total_seconds())}s ago"
+                
+                embed.add_field(
+                    name="👤 User Data",
+                    value=f"**Text XP:** {user_level.text_xp:,}\n"
+                          f"**Text Level:** {user_level.text_level}\n"
+                          f"**Messages:** {user_level.total_messages:,}\n"
+                          f"**Last XP:** {time_since_last}",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="👤 User Data",
+                    value="No user data found (new user)",
+                    inline=False
+                )
+            
+            # Overall status
+            overall_status = "✅ Ready to gain XP" if (can_get_xp and can_gain_now and not target_user.bot) else "❌ Cannot gain XP"
+            embed.add_field(
+                name="📊 Overall Status",
+                value=overall_status,
+                inline=False
+            )
+            
+            await interaction.response.send_message(embed=embed)
+            
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Error debugging XP: {str(e)}",
                 ephemeral=True
             )
         finally:

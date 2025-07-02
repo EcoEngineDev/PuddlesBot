@@ -243,7 +243,7 @@ class PuddlesBot(commands.Bot):
             print("💬 Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
             print("🎲 Fun commands: /quack, /diceroll")
             print("📨 Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
-            print("⭐ Leveling commands: /rank, /top, /setxp, /setlevel, /lvlreset, /lvlconfig")
+            print("⭐ Leveling commands: /rank, /top, /setxp, /setlevel, /lvlreset, /lvlconfig, /testxp, /debugxp")
             print("🎵 Music commands: Available through Vocard cogs (/play, /skip, /pause, /resume, /stop, /queue, /volume, etc.)")
             print("🎛️ Audio quality commands: /quality, /audiostats")
             print("❓ Utility commands: /help")
