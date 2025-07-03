@@ -114,7 +114,7 @@ async def update_invite_cache(guild):
 
 async def sync_invite_database(guild):
     """Sync current Discord invites with database"""
-    session = get_session()
+    session = get_session(str(guild.id))
     try:
         invites = await guild.invites()
         
@@ -152,7 +152,7 @@ async def sync_invite_database(guild):
 async def handle_member_join(member):
     """Handle when a member joins - detect which invite was used"""
     guild = member.guild
-    session = get_session()
+    session = get_session(str(guild.id))
     
     try:
         # Get current invites
@@ -233,7 +233,7 @@ async def can_manage_invites(interaction: discord.Interaction) -> bool:
         return True
     
     # Check if user is in invite admin whitelist
-    session = get_session()
+    session = get_session(str(interaction.guild_id))
     try:
         admin_record = session.query(InviteAdmin).filter_by(
             user_id=str(interaction.user.id),
@@ -249,7 +249,7 @@ async def can_manage_invites(interaction: discord.Interaction) -> bool:
 async def handle_member_leave(member):
     """Handle when a member leaves - update leave statistics"""
     guild = member.guild
-    session = get_session()
+    session = get_session(str(guild.id))
     
     try:
         # Find the join record for this member
@@ -328,7 +328,7 @@ class ResetInvitesConfirmView(discord.ui.View):
         await interaction.response.edit_message(content="🔄 Resetting all invite data...", view=self)
         
         # Reset all invite data
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             # Delete all invite stats for this server
             session.query(InviteStats).filter_by(
@@ -434,7 +434,7 @@ class EditInvitesModal(discord.ui.Modal):
                 return
             
             # Update database
-            session = get_session()
+            session = get_session(str(interaction.guild_id))
             try:
                 if self.current_stats:
                     # Update existing stats
@@ -538,7 +538,7 @@ async def editinvites(interaction: discord.Interaction, user: discord.Member):
         return
     
     # Get current stats
-    session = get_session()
+    session = get_session(str(interaction.guild_id))
     try:
         current_stats = session.query(InviteStats).filter_by(
             guild_id=str(interaction.guild_id),
@@ -576,7 +576,7 @@ async def invw(interaction: discord.Interaction, user: discord.Member, action: s
         )
         return
     
-    session = get_session()
+    session = get_session(str(interaction.guild_id))
     try:
         existing_admin = session.query(InviteAdmin).filter_by(
             user_id=str(user.id),
@@ -638,7 +638,7 @@ async def invw(interaction: discord.Interaction, user: discord.Member, action: s
 @log_command
 async def topinvite(interaction: discord.Interaction):
     """Show top inviters with their statistics"""
-    session = get_session()
+    session = get_session(str(interaction.guild_id))
     try:
         # Get top 10 inviters by net invites
         top_inviters = session.query(InviteStats).filter_by(
@@ -720,7 +720,7 @@ async def topinvite(interaction: discord.Interaction):
 @log_command
 async def showinvites(interaction: discord.Interaction, user: discord.Member):
     """Show detailed invite statistics for a specific user"""
-    session = get_session()
+    session = get_session(str(interaction.guild_id))
     try:
         # Get user's invite stats
         stats = session.query(InviteStats).filter_by(
@@ -886,7 +886,7 @@ async def invitereset(interaction: discord.Interaction):
 @log_command
 async def invitestats(interaction: discord.Interaction):
     """Show comprehensive server invite statistics"""
-    session = get_session()
+    session = get_session(str(interaction.guild_id))
     try:
         guild_id = str(interaction.guild_id)
         

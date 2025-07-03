@@ -44,7 +44,7 @@ async def can_create_tasks(interaction: discord.Interaction) -> bool:
         return True
     
     # Check if user is in the task creator whitelist
-    session = get_session()
+    session = get_session(str(interaction.guild_id))
     try:
         creator = session.query(TaskCreator).filter_by(
             user_id=str(interaction.user.id),
@@ -102,7 +102,7 @@ class TaskSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         view: TaskView = self.view
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             task_id = int(self.values[0])
             task = session.query(Task).get(task_id)
@@ -176,7 +176,7 @@ class CompleteTaskButton(discord.ui.Button):
             )
             return
 
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             task = session.query(Task).get(view.selected_task.id)
             if task:
@@ -346,7 +346,7 @@ class TaskEditModal(discord.ui.Modal):
         self.add_item(self.text_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             # Get the latest version of the task from the database
             task = session.query(Task).get(self.task.id)
@@ -615,7 +615,7 @@ def setup_task_commands(tree: app_commands.CommandTree):
             )
             return
         
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             existing_creator = session.query(TaskCreator).filter_by(
                 user_id=str(user.id),
@@ -698,7 +698,7 @@ def setup_task_commands(tree: app_commands.CommandTree):
             parsed_date = parser.parse(due_date)
             
             # Create the task
-            session = get_session()
+            session = get_session(str(interaction.guild_id))
             try:
                 new_task = Task(
                     name=name,
@@ -765,10 +765,11 @@ def setup_task_commands(tree: app_commands.CommandTree):
     )
     @log_command
     async def mytasks(interaction: discord.Interaction):
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             tasks = session.query(Task).filter_by(
                 assigned_to=str(interaction.user.id),
+                server_id=str(interaction.guild_id),
                 completed=False
             ).order_by(Task.due_date).all()
             
@@ -839,7 +840,7 @@ def setup_task_commands(tree: app_commands.CommandTree):
     )
     @log_command
     async def taskedit(interaction: discord.Interaction):
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             # Get tasks created by this user or assigned to them (if they're admin)
             if interaction.user.guild_permissions.administrator:
@@ -892,7 +893,7 @@ def setup_task_commands(tree: app_commands.CommandTree):
     )
     @log_command
     async def showtasks(interaction: discord.Interaction, target_user: discord.Member):
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             tasks = session.query(Task).filter_by(
                 assigned_to=str(target_user.id),
@@ -985,7 +986,7 @@ def setup_task_commands(tree: app_commands.CommandTree):
     @checks.has_permissions(administrator=True)
     @log_command
     async def alltasks(interaction: discord.Interaction):
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             tasks = session.query(Task).filter_by(
                 server_id=str(interaction.guild_id),
@@ -1067,7 +1068,7 @@ def setup_task_commands(tree: app_commands.CommandTree):
     )
     @log_command
     async def oldtasks(interaction: discord.Interaction, user: discord.Member):
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             # Query completed tasks for the specified user
             completed_tasks = session.query(Task).filter_by(

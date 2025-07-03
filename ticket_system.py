@@ -119,7 +119,7 @@ class TicketButton(discord.ui.Button):
         await self.create_ticket(interaction)
     
     async def create_ticket(self, interaction, answers=None):
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             # Check existing ticket
             existing_ticket = session.query(Ticket).filter_by(
@@ -342,7 +342,7 @@ class TicketControlView(discord.ui.View):
     
     @discord.ui.button(label="🔒 Close Ticket", style=discord.ButtonStyle.danger, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             ticket = session.query(Ticket).get(self.ticket_db_id)
             if not ticket:
@@ -443,7 +443,7 @@ class ButtonSetupModal(discord.ui.Modal):
             self.add_item(self.role_info)
     
     async def on_submit(self, interaction: discord.Interaction):
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             interactive_msg = session.query(InteractiveMessage).get(self.message_id)
             if not interactive_msg:
