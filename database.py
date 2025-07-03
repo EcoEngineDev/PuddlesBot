@@ -31,12 +31,12 @@ def get_db_file_path(server_id):
     return os.path.join(DATA_DIR, f'server_{server_id}.db')
 
 def create_backup(server_id=None):
-    """Create a backup of the database file(s)"""
+    """Create a backup of server database(s)"""
     if server_id:
         # Backup specific server database
         db_file = get_db_file_path(server_id)
         if os.path.exists(db_file):
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             backup_file = os.path.join(BACKUP_DIR, f'server_{server_id}_backup_{timestamp}.db')
             shutil.copy2(db_file, backup_file)
             
