@@ -61,6 +61,157 @@ def migrate_old_database():
     # DISABLED: User will migrate manually
     print("✅ Automatic migration disabled - using server-specific databases only")
     return
+
+def manual_migrate_from_old_db(old_db_path, target_server_id):
+    """Manually migrate data from old database to a specific server database"""
+    if not os.path.exists(old_db_path):
+        print(f"❌ Old database file not found: {old_db_path}")
+        return False
+    
+    try:
+        print(f"🔄 Starting manual migration from {old_db_path} to server {target_server_id}")
+        
+        # Create old database engine
+        old_engine = create_engine(f'sqlite:///{old_db_path}', echo=False)
+        old_session = sessionmaker(bind=old_engine)()
+        
+        # Initialize target server database
+        init_db(target_server_id)
+        target_session = get_session(target_server_id)
+        
+        # Migrate tasks
+        try:
+            old_tasks = old_session.execute(sqlalchemy.text("SELECT * FROM tasks")).fetchall()
+            print(f"📋 Found {len(old_tasks)} tasks to migrate")
+            
+            for task_data in old_tasks:
+                # Create new task with server_id
+                new_task = Task(
+                    name=task_data.name,
+                    assigned_to=task_data.assigned_to,
+                    due_date=task_data.due_date,
+                    description=task_data.description,
+                    completed=task_data.completed,
+                    completed_at=task_data.completed_at,
+                    created_at=task_data.created_at,
+                    server_id=target_server_id,
+                    created_by=getattr(task_data, 'created_by', '0')
+                )
+                target_session.add(new_task)
+            
+            target_session.commit()
+            print(f"✅ Migrated {len(old_tasks)} tasks")
+            
+        except Exception as e:
+            print(f"⚠️ Could not migrate tasks: {e}")
+        
+        # Migrate task creators
+        try:
+            old_creators = old_session.execute(sqlalchemy.text("SELECT * FROM task_creators")).fetchall()
+            print(f"👥 Found {len(old_creators)} task creators to migrate")
+            
+            for creator_data in old_creators:
+                new_creator = TaskCreator(
+                    user_id=creator_data.user_id,
+                    server_id=target_server_id,
+                    added_by=getattr(creator_data, 'added_by', '0'),
+                    added_at=creator_data.added_at
+                )
+                target_session.add(new_creator)
+            
+            target_session.commit()
+            print(f"✅ Migrated {len(old_creators)} task creators")
+            
+        except Exception as e:
+            print(f"⚠️ Could not migrate task creators: {e}")
+        
+        # Migrate user levels
+        try:
+            old_levels = old_session.execute(sqlalchemy.text("SELECT * FROM user_levels")).fetchall()
+            print(f"📊 Found {len(old_levels)} user levels to migrate")
+            
+            for level_data in old_levels:
+                new_level = UserLevel(
+                    user_id=level_data.user_id,
+                    guild_id=target_server_id,
+                    text_xp=level_data.text_xp,
+                    voice_xp=level_data.voice_xp,
+                    text_level=level_data.text_level,
+                    voice_level=level_data.voice_level,
+                    total_messages=level_data.total_messages,
+                    total_voice_time=level_data.total_voice_time,
+                    last_text_xp=level_data.last_text_xp,
+                    last_voice_update=level_data.last_voice_update,
+                    voice_join_time=level_data.voice_join_time
+                )
+                target_session.add(new_level)
+            
+            target_session.commit()
+            print(f"✅ Migrated {len(old_levels)} user levels")
+            
+        except Exception as e:
+            print(f"⚠️ Could not migrate user levels: {e}")
+        
+        # Migrate level settings
+        try:
+            old_settings = old_session.execute(sqlalchemy.text("SELECT * FROM level_settings")).fetchall()
+            print(f"⚙️ Found {len(old_settings)} level settings to migrate")
+            
+            for setting_data in old_settings:
+                new_setting = LevelSettings(
+                    guild_id=target_server_id,
+                    text_xp_enabled=setting_data.text_xp_enabled,
+                    voice_xp_enabled=setting_data.voice_xp_enabled,
+                    text_xp_min=setting_data.text_xp_min,
+                    text_xp_max=setting_data.text_xp_max,
+                    voice_xp_rate=setting_data.voice_xp_rate,
+                    text_cooldown=setting_data.text_cooldown,
+                    level_up_messages=setting_data.level_up_messages,
+                    level_up_channel=setting_data.level_up_channel,
+                    no_xp_roles=setting_data.no_xp_roles,
+                    no_xp_channels=setting_data.no_xp_channels,
+                    multiplier=setting_data.multiplier
+                )
+                target_session.add(new_setting)
+            
+            target_session.commit()
+            print(f"✅ Migrated {len(old_settings)} level settings")
+            
+        except Exception as e:
+            print(f"⚠️ Could not migrate level settings: {e}")
+        
+        # Migrate level rewards
+        try:
+            old_rewards = old_session.execute(sqlalchemy.text("SELECT * FROM level_rewards")).fetchall()
+            print(f"🏆 Found {len(old_rewards)} level rewards to migrate")
+            
+            for reward_data in old_rewards:
+                new_reward = LevelRewards(
+                    guild_id=target_server_id,
+                    role_id=reward_data.role_id,
+                    text_level=reward_data.text_level,
+                    voice_level=reward_data.voice_level,
+                    remove_previous=reward_data.remove_previous,
+                    dm_user=reward_data.dm_user
+                )
+                target_session.add(new_reward)
+            
+            target_session.commit()
+            print(f"✅ Migrated {len(old_rewards)} level rewards")
+            
+        except Exception as e:
+            print(f"⚠️ Could not migrate level rewards: {e}")
+        
+        old_session.close()
+        target_session.close()
+        old_engine.dispose()
+        
+        print(f"✅ Manual migration completed for server {target_server_id}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error during manual migration: {e}")
+        return False
             
 
 
@@ -157,6 +308,29 @@ def init_db(server_id):
             
         try:
             db_file = get_db_file_path(server_id)
+            
+            # Check if database file exists and is corrupted
+            if os.path.exists(db_file):
+                try:
+                    # Test if database is valid by trying to read it
+                    test_engine = create_engine(f'sqlite:///{db_file}', echo=False)
+                    test_session = sessionmaker(bind=test_engine)()
+                    test_session.execute(sqlalchemy.text("SELECT 1"))
+                    test_session.close()
+                    test_engine.dispose()
+                except Exception as corruption_error:
+                    print(f"⚠️ Database file for server {server_id} appears to be corrupted: {corruption_error}")
+                    print(f"🔄 Creating backup and starting fresh...")
+                    
+                    # Create backup of corrupted file
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    corrupted_backup = os.path.join(BACKUP_DIR, f'corrupted_server_{server_id}_{timestamp}.db')
+                    shutil.copy2(db_file, corrupted_backup)
+                    print(f"📦 Corrupted database backed up to: {corrupted_backup}")
+                    
+                    # Remove corrupted file
+                    os.remove(db_file)
+                    print(f"🗑️ Removed corrupted database file")
             
             # Create database engine for this server
             engine = create_engine(f'sqlite:///{db_file}', echo=False)
