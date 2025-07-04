@@ -499,8 +499,16 @@ async def setup_ticket(interaction: discord.Interaction, button_id: str):
             )
             session.add(ticket)
             session.commit()
-            
-            # ... rest of the code ...
+            return ticket
+        except Exception as e:
+            print(f"Error creating ticket: {e}")
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception as e:
+        print(f"Error in setup_ticket: {e}")
+        return None
 
 async def close_ticket(interaction: discord.Interaction):
     """Close a ticket"""
@@ -512,6 +520,37 @@ async def close_ticket(interaction: discord.Interaction):
                 status="open"
             ).first()
             
-            # ... rest of the code ...
+            if not ticket:
+                await interaction.response.send_message("❌ No open ticket found for this channel!", ephemeral=True)
+                return
+            
+            # Update ticket status
+            ticket.status = "closed"
+            ticket.closed_at = datetime.utcnow()
+            ticket.closed_by = str(interaction.user.id)
+            session.commit()
+            
+            # Send confirmation
+            embed = discord.Embed(
+                title="🔒 Ticket Closed",
+                description=f"This ticket has been closed by {interaction.user.mention}",
+                color=discord.Color.red(),
+                timestamp=datetime.utcnow()
+            )
+            await interaction.response.send_message(embed=embed)
+            
+            # Delete channel after delay
+            await asyncio.sleep(10)
+            await interaction.channel.delete()
+            
+        except Exception as e:
+            print(f"Error closing ticket: {e}")
+            session.rollback()
+            await interaction.response.send_message("❌ An error occurred while closing the ticket.", ephemeral=True)
+        finally:
+            session.close()
+    except Exception as e:
+        print(f"Error in close_ticket: {e}")
+        await interaction.response.send_message("❌ An error occurred while closing the ticket.", ephemeral=True)
 
 # ... existing code ... 
