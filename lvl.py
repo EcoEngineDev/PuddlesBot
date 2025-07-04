@@ -18,65 +18,6 @@ def setup_leveling_system(client):
     """Initialize the leveling system with client reference"""
     global _client
     _client = client
-    
-    # Start automatic voice scanning
-    asyncio.create_task(auto_voice_scan_startup())
-
-async def auto_voice_scan_startup():
-    """Automatically scan voice channels when bot starts up and periodically"""
-    # Wait for bot to be ready
-    await _client.wait_until_ready()
-    
-    # Initial scan after bot startup
-    await asyncio.sleep(5)  # Give bot time to fully initialize
-    await auto_scan_voice_channels()
-    
-    # Set up periodic scanning (every 10 minutes)
-    while not _client.is_closed():
-        await asyncio.sleep(600)  # 10 minutes
-        await auto_scan_voice_channels()
-
-async def auto_scan_voice_channels():
-    """Scan all voice channels across all guilds and start tracking eligible users"""
-    try:
-        total_tracked = 0
-        guilds_scanned = 0
-        
-        for guild in _client.guilds:
-            guild_tracked = 0
-            
-            for channel in guild.voice_channels:
-                if len(channel.members) < 2:
-                    continue  # Skip channels with less than 2 people
-                    
-                human_members = [m for m in channel.members if not m.bot]
-                if len(human_members) < 2:
-                    continue  # Need at least 2 humans
-                    
-                # Start tracking each human member
-                for member in human_members:
-                    guild_id = guild.id
-                    user_id = member.id
-                    
-                    # Check if already being tracked
-                    if guild_id in voice_tracker.voice_sessions and user_id in voice_tracker.voice_sessions[guild_id]:
-                        continue  # Already tracked
-                        
-                    # Start tracking
-                    voice_tracker.user_joined_voice(guild_id, user_id, channel)
-                    guild_tracked += 1
-                    total_tracked += 1
-                    
-            if guild_tracked > 0:
-                print(f"🎙️ AUTO-SCAN: Started tracking {guild_tracked} users in {guild.name}")
-                guilds_scanned += 1
-                
-        if total_tracked > 0:
-            print(f"🎙️ AUTO-SCAN COMPLETE: Started tracking {total_tracked} users across {guilds_scanned} guilds")
-        
-    except Exception as e:
-        print(f"❌ Error in auto voice scan: {e}")
-        print(f"   Full error: {traceback.format_exc()}")
 
 def log_command(func):
     @functools.wraps(func)
@@ -511,17 +452,10 @@ async def handle_voice_state_update(member: discord.Member, before: discord.Voic
             print(f"   📥 User joined voice from disconnected")
             voice_tracker.user_joined_voice(guild_id, user_id, after.channel)
             
-            # Check if this join made the channel eligible for tracking other users
-            await auto_check_channel_tracking(after.channel)
-            
         # User moved between channels
         elif before.channel and after.channel and before.channel != after.channel:
             print(f"   🔄 User moved between channels")
             voice_tracker.user_moved_voice(guild_id, user_id, before.channel, after.channel)
-            
-            # Check both channels for tracking eligibility
-            await auto_check_channel_tracking(before.channel)
-            await auto_check_channel_tracking(after.channel)
             
         # User stayed in same channel but something changed (mute, deafen, etc.)
         elif before.channel == after.channel and after.channel:
@@ -545,36 +479,6 @@ async def handle_voice_state_update(member: discord.Member, before: discord.Voic
     except Exception as e:
         print(f"❌ Error in voice state handling: {e}")
         print(f"   Full error: {traceback.format_exc()}")
-
-async def auto_check_channel_tracking(channel: discord.VoiceChannel):
-    """Check a voice channel and start tracking all eligible users"""
-    if not channel:
-        return
-        
-    try:
-        human_members = [m for m in channel.members if not m.bot]
-        if len(human_members) < 2:
-            return  # Need at least 2 humans
-            
-        guild_id = channel.guild.id
-        newly_tracked = 0
-        
-        for member in human_members:
-            user_id = member.id
-            
-            # Check if already being tracked
-            if guild_id in voice_tracker.voice_sessions and user_id in voice_tracker.voice_sessions[guild_id]:
-                continue  # Already tracked
-                
-            # Start tracking
-            voice_tracker.user_joined_voice(guild_id, user_id, channel)
-            newly_tracked += 1
-            
-        if newly_tracked > 0:
-            print(f"   🔄 AUTO-CHECK: Started tracking {newly_tracked} additional users in {channel.name}")
-            
-    except Exception as e:
-        print(f"❌ Error in auto channel check: {e}")
 
 # ============= COMMAND SETUP =============
 
@@ -1070,78 +974,6 @@ def setup_level_commands(tree: app_commands.CommandTree):
             )
         finally:
             session.close()
-
-    @tree.command(
-        name="voicescan",
-        description="Manually scan voice channels (automatic scanning runs every 10 min)"
-    )
-    @app_commands.default_permissions(administrator=True)
-    @log_command
-    async def voicescan(interaction: discord.Interaction):
-        await interaction.response.defer()
-        
-        tracked_count = 0
-        channel_info = []
-        
-        try:
-            # Scan all voice channels in the guild
-            for channel in interaction.guild.voice_channels:
-                if len(channel.members) < 2:
-                    continue  # Skip channels with less than 2 people
-                    
-                human_members = [m for m in channel.members if not m.bot]
-                if len(human_members) < 2:
-                    continue  # Need at least 2 humans
-                    
-                channel_info.append(f"**{channel.name}:** {len(human_members)} users")
-                
-                # Start tracking each human member
-                for member in human_members:
-                    guild_id = interaction.guild_id
-                    user_id = member.id
-                    
-                    # Check if already being tracked
-                    if guild_id in voice_tracker.voice_sessions and user_id in voice_tracker.voice_sessions[guild_id]:
-                        continue  # Already tracked
-                        
-                    # Start tracking
-                    voice_tracker.user_joined_voice(guild_id, user_id, channel)
-                    tracked_count += 1
-                    
-            embed = discord.Embed(
-                title="🎙️ Voice Channel Scan Complete",
-                description=f"Started tracking **{tracked_count}** users",
-                color=discord.Color.green()
-            )
-            
-            if channel_info:
-                embed.add_field(
-                    name="📊 Active Voice Channels",
-                    value="\n".join(channel_info),
-                    inline=False
-                )
-            else:
-                embed.add_field(
-                    name="📊 Status",
-                    value="No eligible voice channels found (need 2+ humans)",
-                    inline=False
-                )
-                
-            # Show current tracking status
-            guild_sessions = voice_tracker.voice_sessions.get(interaction.guild_id, {})
-            embed.add_field(
-                name="🔍 Current Tracking",
-                value=f"Total users being tracked: **{len(guild_sessions)}**",
-                inline=False
-            )
-            
-            await interaction.followup.send(embed=embed)
-            
-        except Exception as e:
-            await interaction.followup.send(
-                f"❌ Error scanning voice channels: {str(e)}",
-                ephemeral=True
-            )
 
 # Export the setup functions
 __all__ = ['setup_leveling_system', 'setup_level_commands', 'handle_message_xp', 'handle_voice_state_update'] 

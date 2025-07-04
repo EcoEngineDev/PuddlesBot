@@ -464,7 +464,7 @@ async def finalize_intmsg_creation(message, conversation):
         embed.description = updated_description
         
         # Save to database
-        session = get_session(conversation.guild_id)
+        session = get_session()
         try:
             interactive_msg = InteractiveMessage(
                 message_id=str(sent_message.id),
@@ -541,7 +541,7 @@ async def finalize_intmsg_creation(message, conversation):
 
 async def add_buttons_to_existing_message(message, conversation, button_type):
     """Add buttons to an existing interactive message"""
-    session = get_session(conversation.guild_id)
+    session = get_session()
     try:
         message_id = conversation.data['message_id']
         interactive_msg = session.query(InteractiveMessage).get(message_id)
@@ -628,7 +628,7 @@ class EditIntMsgView(discord.ui.View):
     
     @discord.ui.button(label="📝 Edit Message", style=discord.ButtonStyle.primary, emoji="✏️")
     async def edit_message(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = EditMessageModal(self.message_id, str(interaction.guild_id))
+        modal = EditMessageModal(self.message_id)
         await interaction.response.send_modal(modal)
     
     @discord.ui.button(label="➕ Add Ticket Button", style=discord.ButtonStyle.success, emoji="🎫")
@@ -692,7 +692,7 @@ class EditIntMsgView(discord.ui.View):
     
     @discord.ui.button(label="🗑️ Remove Button", style=discord.ButtonStyle.danger, emoji="❌")
     async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        session = get_session(str(interaction.guild_id))
+        session = get_session()
         try:
             interactive_msg = session.get(InteractiveMessage, self.message_id)
             if not interactive_msg or not interactive_msg.buttons:
@@ -728,13 +728,12 @@ class EditIntMsgView(discord.ui.View):
         await view._update_interactive_message(interaction)
 
 class EditMessageModal(discord.ui.Modal):
-    def __init__(self, message_id, guild_id):
+    def __init__(self, message_id):
         super().__init__(title="Edit Interactive Message")
         self.message_id = message_id
-        self.guild_id = guild_id
         
         # Load current values
-        session = get_session(guild_id)
+        session = get_session()
         try:
             interactive_msg = session.get(InteractiveMessage, message_id)
             current_title = interactive_msg.title if interactive_msg else ""
@@ -797,7 +796,7 @@ class EditMessageModal(discord.ui.Modal):
         self.add_item(self.color_input)
     
     async def on_submit(self, interaction: discord.Interaction):
-        session = get_session(self.guild_id)
+        session = get_session()
         try:
             interactive_msg = session.get(InteractiveMessage, self.message_id)
             if not interactive_msg:
@@ -874,7 +873,7 @@ class ButtonRemovalSelect(discord.ui.Select):
         self.message_id = message_id
     
     async def callback(self, interaction: discord.Interaction):
-        session = get_session(str(interaction.guild_id))
+        session = get_session()
         try:
             button_id = int(self.values[0])
             button = session.get(MessageButton, button_id)
@@ -915,7 +914,7 @@ class MessageManagementView(discord.ui.View):
         await self._update_interactive_message(interaction)
     
     async def _update_interactive_message(self, interaction: discord.Interaction):
-        session = get_session(str(interaction.guild_id))
+        session = get_session()
         try:
             interactive_msg = session.get(InteractiveMessage, self.message_id)
             if not interactive_msg:
@@ -1010,7 +1009,7 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
             )
             return
         
-        session = get_session(str(interaction.guild_id))
+        session = get_session()
         try:
             existing_creator = session.query(IntMsgCreator).filter_by(
                 user_id=str(user.id),
@@ -1077,7 +1076,7 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
     @log_command
     async def editintmsg(interaction: discord.Interaction, message_id: str):
         """Edit an interactive message and its buttons"""
-        session = get_session(str(interaction.guild_id))
+        session = get_session()
         try:
             # Look up by Discord message ID (not database ID)
             interactive_msg = session.query(InteractiveMessage).filter_by(message_id=message_id).first()
@@ -1128,7 +1127,7 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
     @log_command
     async def listmessages(interaction: discord.Interaction):
         """List all interactive messages in the server"""
-        session = get_session(str(interaction.guild_id))
+        session = get_session()
         try:
             messages = session.query(InteractiveMessage).filter_by(
                 server_id=str(interaction.guild_id)
@@ -1173,7 +1172,7 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
     @log_command
     async def ticketstats(interaction: discord.Interaction):
         """View ticket statistics"""
-        session = get_session(str(interaction.guild_id))
+        session = get_session()
         try:
             total_tickets = session.query(Ticket).filter_by(server_id=str(interaction.guild_id)).count()
             open_tickets = session.query(Ticket).filter_by(server_id=str(interaction.guild_id), status="open").count()

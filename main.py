@@ -211,18 +211,41 @@ class PuddlesBot(commands.Bot):
             print("Full error:", traceback.format_exc())
         
     async def setup_hook(self):
-        print("Setting up bot modules...")
+        """Set up the bot before it starts"""
+        print("🤖 Setting up bot...")
+        
         try:
-            # Setup non-music module systems with client references
-            dice.setup_dice_system(self)
-            intmsg.setup_intmsg_system(self)
-            fun.setup_fun_system(self)
-            help.setup_help_system(self)
-            inviter.setup_inviter_system(self)
-            tasks.setup_task_system(self)
-            lvl.setup_leveling_system(self)  # Leveling system
+            # STEP 1: Migrate legacy database if needed
+            print("📦 Checking for legacy database...")
+            from database import migrate_legacy_data
+            await migrate_legacy_data()
             
-            # Register commands from non-music modules
+            # STEP 2: Set up music system
+            print("🎵 Setting up music system...")
+            await self.setup_vocard_music()
+            
+            # STEP 3: Set up task system
+            print("📋 Setting up task system...")
+            from tasks import setup_task_system
+            setup_task_system(self)
+            
+            # STEP 4: Set up leveling system
+            print("📊 Setting up leveling system...")
+            from lvl import setup_leveling_system
+            setup_leveling_system(self)
+            
+            # STEP 5: Set up invite tracking
+            print("📨 Setting up invite tracking...")
+            from inviter import setup_inviter_system
+            setup_inviter_system(self)
+            
+            # STEP 6: Set up interactive messages
+            print("💬 Setting up interactive messages...")
+            from intmsg import setup_intmsg_system
+            setup_intmsg_system(self)
+            
+            # STEP 7: Register all commands
+            print("🔄 Registering commands...")
             dice.setup_dice_commands(self.tree)
             intmsg.setup_intmsg_commands(self.tree)
             fun.setup_fun_commands(self.tree)
@@ -230,33 +253,32 @@ class PuddlesBot(commands.Bot):
             inviter.setup_inviter_commands(self.tree)
             quality_manager.setup_quality_commands(self.tree, self)
             tasks.setup_task_commands(self.tree)
-            lvl.setup_level_commands(self.tree)  # Leveling commands
+            lvl.setup_level_commands(self.tree)
             
-            # Initialize Vocard music system
-            await self.setup_vocard_music()
-            
-            print("Syncing commands...")
+            print("🔄 Syncing commands...")
             await self.tree.sync(guild=None)  # None means global sync
-            print("Commands synced successfully!")
-            print("✅ All commands registered successfully!")
+            print("✅ Commands synced successfully!")
             print("📋 Task commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /oldtasks, /tcw")
             print("💬 Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
             print("🎲 Fun commands: /quack, /diceroll")
             print("📨 Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
-            print("⭐ Leveling commands: /rank, /top, /setxp, /setlevel, /lvlreset, /lvlconfig, /testxp, /testvoice, /voicescan, /debugxp")
+            print("⭐ Leveling commands: /rank, /top, /setxp, /setlevel, /lvlreset, /lvlconfig, /testxp, /testvoice, /debugxp")
             print("🎵 Music commands: Available through Vocard cogs (/play, /skip, /pause, /resume, /stop, /queue, /volume, etc.)")
             print("🎛️ Audio quality commands: /quality, /audiostats")
             print("❓ Utility commands: /help")
+            
+            # STEP 8: Set up scheduler
+            print("⏰ Setting up scheduler...")
+            self.scheduler.start()
+            self.scheduler.add_job(self.check_due_tasks, 'interval', hours=1)
+            self.scheduler.add_job(self.backup_database, 'interval', hours=6)
+            
+            print("✅ Bot setup complete!")
+            
         except Exception as e:
-            print(f"Failed to sync commands: {e}")
-            print("Full error:", traceback.format_exc())
-        
-        self.scheduler.start()
-        self.scheduler.add_job(self.check_due_tasks, 'interval', hours=1)
-        # Add backup job to run every 6 hours
-        self.scheduler.add_job(self.backup_database, 'interval', hours=6)
-        
-        # Removed load_persistent_views from setup_hook - now handled in on_ready with proper timing
+            print(f"❌ Error during bot setup: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
@@ -279,41 +301,29 @@ class PuddlesBot(commands.Bot):
         await inviter.on_ready()
 
     async def check_due_tasks(self):
-        from database import get_all_server_ids
-        
-        # Get all server IDs that have databases
-        server_ids = get_all_server_ids()
-        
-        for server_id in server_ids:
-            # Skip if bot is not in this server
-            guild = self.get_guild(int(server_id))
-            if not guild:
-                continue
-                
-            session = get_session(server_id)
-            try:
-                three_days_from_now = datetime.utcnow() + timedelta(days=3)
-                tasks = session.query(Task).filter(
-                    Task.due_date <= three_days_from_now,
-                    Task.due_date > datetime.utcnow(),
-                    Task.completed == False,
-                    Task.server_id == server_id
-                ).all()
-                
-                for task in tasks:
-                    user = await self.fetch_user(int(task.assigned_to))
-                    if user:
-                        embed = discord.Embed(
-                            title="⚠️ Task Due Soon!",
-                            description=f"**Server:** {guild.name}\n**Task:** {task.name}\n**Due Date:** {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\n\n**Description:**\n{task.description}",
-                            color=discord.Color.yellow()
-                        )
-                        try:
-                            await user.send(embed=embed)
-                        except discord.Forbidden:
-                            pass
-            finally:
-                session.close()
+        session = get_session()
+        try:
+            three_days_from_now = datetime.utcnow() + timedelta(days=3)
+            tasks = session.query(Task).filter(
+                Task.due_date <= three_days_from_now,
+                Task.due_date > datetime.utcnow(),
+                Task.completed == False
+            ).all()
+            
+            for task in tasks:
+                user = await self.fetch_user(int(task.assigned_to))
+                if user:
+                    embed = discord.Embed(
+                        title="⚠️ Task Due Soon!",
+                        description=f"Task: {task.name}\nDue Date: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\n\nDescription:\n{task.description}",
+                        color=discord.Color.yellow()
+                    )
+                    try:
+                        await user.send(embed=embed)
+                    except discord.Forbidden:
+                        pass
+        finally:
+            session.close()
 
     async def on_error(self, event, *args, **kwargs):
         print(f"Error in {event}:", file=sys.stderr)
@@ -345,17 +355,31 @@ class PuddlesBot(commands.Bot):
     async def backup_database(self):
         """Create a backup of all server databases"""
         try:
-            from database import create_backup
-            create_backup()  # This will backup all server databases
-            print(f"All server databases backed up successfully at {datetime.utcnow()}")
+            print("📦 Starting database backup...")
+            from database import create_backup, SERVERS_DIR
+            import os
+            
+            # Get all server database files
+            server_dbs = [f for f in os.listdir(SERVERS_DIR) if f.endswith('.db')]
+            
+            for db_file in server_dbs:
+                server_id = db_file[:-3]  # Remove .db extension
+                try:
+                    create_backup(server_id)
+                    print(f"✅ Created backup for server {server_id}")
+                except Exception as e:
+                    print(f"❌ Error backing up database for server {server_id}: {e}")
+            
+            print(f"✅ Database backup complete! Backed up {len(server_dbs)} server databases")
+            
         except Exception as e:
-            print(f"Error creating database backups: {e}")
-            print(traceback.format_exc())
+            print(f"❌ Error during database backup: {e}")
+            import traceback
+            traceback.print_exc()
     
     async def load_persistent_views(self):
         """Load persistent views for interactive messages and tickets"""
-        from database import get_all_server_ids
-        
+        session = get_session()
         restored_messages = 0
         restored_tickets = 0
         cleaned_messages = 0
@@ -367,108 +391,213 @@ class PuddlesBot(commands.Bot):
         for guild in self.guilds:
             print(f"   • {guild.name} (ID: {guild.id}) - {len(guild.channels)} channels")
         
-        # Get all server IDs that have databases
-        server_ids = get_all_server_ids()
-        print(f"📋 Found databases for {len(server_ids)} servers")
-        
-        for server_id in server_ids:
-            # Skip if bot is not in this server
-            guild = self.get_guild(int(server_id))
-            if not guild:
-                print(f"⏭️ Skipping server {server_id} - bot not in server")
-                continue
+        try:
+            # STEP 1: Clean up deleted messages from database
+            print("🧹 Cleaning up deleted messages...")
+            interactive_messages = session.query(InteractiveMessage).all()
+            print(f"📋 Found {len(interactive_messages)} interactive messages in database")
             
-            print(f"\n🔄 Processing server: {guild.name} (ID: {server_id})")
-            session = get_session(server_id)
-            
-            try:
-                # STEP 1: Clean up deleted messages from database
-                print("🧹 Cleaning up deleted messages...")
-                interactive_messages = session.query(InteractiveMessage).all()
-                print(f"📋 Found {len(interactive_messages)} interactive messages in database")
+            for msg_data in interactive_messages:
+                print(f"\n🔍 Checking message {msg_data.id}:")
+                print(f"   Discord Message ID: {msg_data.message_id}")
+                print(f"   Channel ID: {msg_data.channel_id}")
+                print(f"   Server ID: {msg_data.server_id}")
+                print(f"   Title: {msg_data.title}")
+                print(f"   Buttons: {len(msg_data.buttons)}")
                 
-                for msg_data in interactive_messages:
-                    print(f"\n🔍 Checking message {msg_data.id}:")
-                    print(f"   Discord Message ID: {msg_data.message_id}")
-                    print(f"   Channel ID: {msg_data.channel_id}")
-                    print(f"   Server ID: {msg_data.server_id}")
-                    print(f"   Title: {msg_data.title}")
-                    print(f"   Buttons: {len(msg_data.buttons)}")
+                # Check if bot is in the server where this message was created
+                target_guild = self.get_guild(int(msg_data.server_id))
+                if target_guild:
+                    print(f"   ✅ Bot is in server: {target_guild.name}")
+                else:
+                    print(f"   ❌ Bot is NOT in server {msg_data.server_id}")
+                    print(f"   🗑️ Removing message {msg_data.id} from database (bot not in server)")
+                    session.delete(msg_data)
+                    cleaned_messages += 1
+                    continue
+                
+                try:
+                    channel = self.get_channel(int(msg_data.channel_id))
+                    if not channel:
+                        print(f"   ❌ Channel {msg_data.channel_id} not found with get_channel()")
+                        print(f"   🔍 Channel ID type: {type(msg_data.channel_id)}")
+                        print(f"   🔍 Channel ID value: '{msg_data.channel_id}'")
+                        
+                        # Try converting to int explicitly
+                        try:
+                            channel_id_int = int(msg_data.channel_id)
+                            print(f"   🔍 Converted to int: {channel_id_int}")
+                        except ValueError as ve:
+                            print(f"   ❌ Cannot convert channel ID to int: {ve}")
+                            session.delete(msg_data)
+                            cleaned_messages += 1
+                            continue
+                        
+                        # Try different methods to get the channel
+                        print(f"   🔍 Trying different channel lookup methods...")
+                        
+                        # Method 1: get_channel with explicit int
+                        test_channel = self.get_channel(channel_id_int)
+                        print(f"   • get_channel(int): {test_channel}")
+                        
+                        # Method 2: Look in the target guild specifically
+                        guild_channel = target_guild.get_channel(channel_id_int)
+                        print(f"   • guild.get_channel(): {guild_channel}")
+                        
+                        # Method 3: Try to fetch from Discord API
+                        try:
+                            print(f"   🔍 Attempting to fetch channel directly from Discord API...")
+                            fetched_channel = await self.fetch_channel(channel_id_int)
+                            print(f"   • fetch_channel(): {fetched_channel}")
+                            if fetched_channel:
+                                print(f"   ✅ Channel exists! Name: #{fetched_channel.name}")
+                                print(f"   ✅ Guild: {fetched_channel.guild.name}")
+                                print(f"   ⚠️ But get_channel() failed - possible caching issue")
+                                channel = fetched_channel  # Use the fetched channel
+                            else:
+                                print(f"   ❌ fetch_channel() also returned None")
+                        except discord.Forbidden as e:
+                            print(f"   ❌ No permission to fetch channel: {e}")
+                        except discord.NotFound as e:
+                            print(f"   ❌ Channel truly doesn't exist: {e}")
+                        except Exception as e:
+                            print(f"   ❌ Error fetching channel: {e}")
+                        
+                        # If we still don't have the channel, try searching all guilds
+                        if not channel:
+                            print(f"   🔍 Searching all {len(self.guilds)} guilds for channel...")
+                            found_in_guild = None
+                            for guild in self.guilds:
+                                guild_channel = guild.get_channel(channel_id_int)
+                                if guild_channel:
+                                    found_in_guild = guild
+                                    channel = guild_channel
+                                    break
+                            
+                            if found_in_guild:
+                                print(f"   🔍 Channel found in guild: {found_in_guild.name} (ID: {found_in_guild.id})")
+                                print(f"   🔍 Channel name: #{guild_channel.name}")
+                                print(f"   ⚠️ But bot.get_channel() couldn't access it - cache issue?")
+                            else:
+                                print(f"   🔍 Channel not found in any of {len(self.guilds)} connected guilds")
+                        
+                        # If we STILL don't have the channel, remove from database
+                        if not channel:
+                            print(f"   🗑️ Removing message {msg_data.id} from database - channel truly inaccessible")
+                            session.delete(msg_data)
+                            cleaned_messages += 1
+                            continue
+                    
+                    print(f"   ✅ Channel found: #{channel.name} in {channel.guild.name}")
                     
                     try:
-                        channel = self.get_channel(int(msg_data.channel_id))
-                        if not channel:
-                            print(f"   ❌ Channel not found, removing message from database")
-                            session.delete(msg_data)
-                            cleaned_messages += 1
-                            continue
-                        
-                        print(f"   ✅ Channel found: #{channel.name} in {channel.guild.name}")
-                        
-                        try:
-                            message = await channel.fetch_message(int(msg_data.message_id))
-                            print(f"   ✅ Discord message found and accessible")
-                        except discord.NotFound:
-                            print(f"   ❌ Discord message not found, removing from database")
-                            session.delete(msg_data)
-                            cleaned_messages += 1
-                            continue
-                        except discord.Forbidden:
-                            print(f"   ⚠️ No permission to fetch message, skipping")
-                            continue
-                        
-                    except Exception as e:
-                        print(f"   ❌ Error checking message {msg_data.id}: {e}")
+                        message = await channel.fetch_message(int(msg_data.message_id))
+                        print(f"   ✅ Discord message found and accessible")
+                    except discord.NotFound:
+                        print(f"   ❌ Discord message {msg_data.message_id} not found, removing from database")
+                        session.delete(msg_data)
+                        cleaned_messages += 1
                         continue
-                
-                # Commit cleanup changes
-                if cleaned_messages > 0:
-                    session.commit()
-                    print(f"\n🗑️ Cleaned up {cleaned_messages} deleted messages from database")
-                
-                # STEP 2: Register views with bot
-                print(f"\n📋 Registering interactive message views with bot...")
-                remaining_messages = session.query(InteractiveMessage).all()
-                print(f"📊 {len(remaining_messages)} messages remaining after cleanup")
-                
-                for msg_data in remaining_messages:
-                    try:
-                        if msg_data.buttons:
-                            # Create view and register it with the bot
-                            view = InteractiveMessageView(msg_data)
-                            self.add_view(view)  # This is the key step!
-                            restored_messages += 1
-                            print(f"   ✅ Successfully registered view for message {msg_data.message_id}")
-                        else:
-                            print(f"   ⏭️ No buttons found, skipping")
-                    except Exception as e:
-                        print(f"   ❌ Error registering view for message {msg_data.id}: {e}")
+                    except discord.Forbidden:
+                        print(f"   ⚠️ No permission to fetch message {msg_data.message_id}, skipping")
                         continue
+                    
+                except Exception as e:
+                    print(f"   ❌ Error checking message {msg_data.id}: {e}")
+                    continue
+            
+            # Commit cleanup changes
+            if cleaned_messages > 0:
+                session.commit()
+                print(f"\n🗑️ Cleaned up {cleaned_messages} deleted messages from database")
+            
+            # STEP 2: Register views with bot (this is crucial for persistent views)
+            print(f"\n📋 Registering interactive message views with bot...")
+            remaining_messages = session.query(InteractiveMessage).all()
+            print(f"📊 {len(remaining_messages)} messages remaining after cleanup")
+            
+            for msg_data in remaining_messages:
+                print(f"\n🔧 Processing message {msg_data.id}:")
+                print(f"   Discord Message ID: {msg_data.message_id}")
+                print(f"   Channel ID: {msg_data.channel_id}")
+                print(f"   Title: {msg_data.title}")
+                print(f"   Button count: {len(msg_data.buttons)}")
                 
-                # STEP 3: Load ticket control views for this server
-                print("🎫 Loading ticket control views...")
                 try:
-                    open_tickets = session.query(Ticket).filter_by(status="open").all()
-                    for ticket in open_tickets:
-                        try:
-                            channel = self.get_channel(int(ticket.channel_id))
-                            if channel:
-                                view = TicketControlView(ticket.id)
-                                self.add_view(view)
-                                restored_tickets += 1
-                                print(f"✅ Registered ticket control view for ticket {ticket.id}")
-                            else:
-                                print(f"❌ Ticket channel {ticket.channel_id} not found for ticket {ticket.id}")
-                        except Exception as e:
-                            print(f"❌ Error restoring ticket view {ticket.id}: {e}")
-                            continue
-                except Exception as db_error:
-                    print(f"⚠️ Error loading tickets: {db_error}")
-                
-            except Exception as e:
-                print(f"❌ Error processing server {server_id}: {e}")
-            finally:
-                session.close()
+                    if msg_data.buttons:
+                        print(f"   📝 Button details:")
+                        for i, button in enumerate(msg_data.buttons):
+                            print(f"      {i+1}. {button.button_type.upper()}: '{button.label}' (ID: {button.id})")
+                        
+                        # Create view and register it with the bot
+                        print(f"   🔄 Creating InteractiveMessageView...")
+                        view = InteractiveMessageView(msg_data)
+                        
+                        print(f"   🔗 Registering view with bot...")
+                        self.add_view(view)  # This is the key step!
+                        
+                        restored_messages += 1
+                        print(f"   ✅ Successfully registered view for message {msg_data.message_id}")
+                    else:
+                        print(f"   ⏭️ No buttons found, skipping")
+                        
+                except Exception as e:
+                    print(f"   ❌ Error registering view for message {msg_data.id}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+            
+        except Exception as e:
+            print(f"❌ Error loading interactive messages: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        try:
+            # STEP 3: Load ticket control views
+            print("🎫 Loading ticket control views...")
+            
+            try:
+                session = get_session(str(guild.id))  # Pass server ID
+                open_tickets = session.query(Ticket).filter_by(status="open").all()
+            except Exception as db_error:
+                if "no such column" in str(db_error).lower():
+                    print("⚠️ Database schema outdated - some features may not work until database is updated")
+                    print("💡 To fix: Run `/fixdb` command or delete data/tasks.db and restart")
+                    try:
+                        open_tickets = session.execute(
+                            "SELECT id, ticket_id, channel_id, server_id, creator_id, button_id, status, created_at, closed_at, closed_by FROM tickets WHERE status = 'open'"
+                        ).fetchall()
+                        class TicketLike:
+                            def __init__(self, row):
+                                self.id = row[0]
+                                self.channel_id = str(row[2])
+                        open_tickets = [TicketLike(row) for row in open_tickets]
+                    except:
+                        print("❌ Cannot load tickets due to database issues")
+                        open_tickets = []
+                else:
+                    print(f"❌ Database error loading tickets: {db_error}")
+                    open_tickets = []
+            
+            for ticket in open_tickets:
+                try:
+                    channel = self.get_channel(int(ticket.channel_id))
+                    if channel:
+                        view = TicketControlView(ticket.id)
+                        self.add_view(view)
+                        restored_tickets += 1
+                        print(f"✅ Registered ticket control view for ticket {ticket.id}")
+                    else:
+                        print(f"❌ Ticket channel {ticket.channel_id} not found for ticket {ticket.id}")
+                except Exception as e:
+                    print(f"❌ Error restoring ticket view {ticket.id}: {e}")
+                    continue
+                    
+        except Exception as e:
+            print(f"❌ Error loading ticket views: {e}")
+        
+        finally:
+            session.close()
         
         print(f"🎉 Persistence restoration complete!")
         print(f"📊 Results:")
@@ -489,71 +618,80 @@ class PuddlesBot(commands.Bot):
 
     async def _auto_refresh_messages(self):
         """Auto-refresh interactive messages to ensure proper display and functionality"""
-        from database import get_all_server_ids
-        
+        session = get_session()
         refreshed = 0
         
-        # Get all server IDs that have databases
-        server_ids = get_all_server_ids()
-        
-        for server_id in server_ids:
-            # Skip if bot is not in this server
-            guild = self.get_guild(int(server_id))
-            if not guild:
-                continue
+        try:
+            print("🔄 Auto-refreshing interactive messages...")
+            interactive_messages = session.query(InteractiveMessage).all()
+            print(f"🔍 Found {len(interactive_messages)} messages to potentially refresh")
             
-            session = get_session(server_id)
-            try:
-                print(f"🔄 Auto-refreshing messages for server: {guild.name}")
-                interactive_messages = session.query(InteractiveMessage).all()
-                print(f"🔍 Found {len(interactive_messages)} messages to potentially refresh")
+            for msg_data in interactive_messages:
+                print(f"\n🔄 Refreshing message {msg_data.id}:")
+                print(f"   Discord Message ID: {msg_data.message_id}")
+                print(f"   Channel ID: {msg_data.channel_id}")
+                print(f"   Title: {msg_data.title}")
                 
-                for msg_data in interactive_messages:
-                    try:
-                        if not msg_data.buttons:
-                            continue
-                            
-                        channel = self.get_channel(int(msg_data.channel_id))
-                        if not channel:
-                            continue
-                        
-                        try:
-                            message = await channel.fetch_message(int(msg_data.message_id))
-                        except (discord.NotFound, discord.Forbidden):
-                            continue
-                        
-                        # Create embed with proper format
-                        try:
-                            color = discord.Color(int(msg_data.color, 16))
-                        except:
-                            color = discord.Color.blurple()
-                        
-                        description_text = msg_data.description if msg_data.description else ""
-                        if description_text:
-                            updated_description = f"# {msg_data.title}\n\n{description_text}\n\n-# Message ID: {msg_data.message_id}"
-                        else:
-                            updated_description = f"# {msg_data.title}\n\n-# Message ID: {msg_data.message_id}"
-                        
-                        embed = discord.Embed(
-                            description=updated_description,
-                            color=color
-                        )
-                        
-                        # Create view
-                        view = InteractiveMessageView(msg_data)
-                        
-                        await message.edit(embed=embed, view=view)
-                        refreshed += 1
-                        print(f"   ✅ Successfully refreshed message {msg_data.message_id}")
-                        
-                    except Exception as e:
-                        print(f"   ⚠️ Could not refresh message {msg_data.message_id}: {e}")
+                try:
+                    if not msg_data.buttons:
+                        print(f"   ⏭️ No buttons, skipping refresh")
                         continue
                         
-            except Exception as e:
-                print(f"❌ Error during auto-refresh for server {server_id}: {e}")
-            finally:
-                session.close()
+                    channel = self.get_channel(int(msg_data.channel_id))
+                    if not channel:
+                        print(f"   ❌ Channel not found")
+                        continue
+                    
+                    print(f"   ✅ Channel found: #{channel.name}")
+                    
+                    try:
+                        message = await channel.fetch_message(int(msg_data.message_id))
+                        print(f"   ✅ Discord message fetched successfully")
+                    except (discord.NotFound, discord.Forbidden) as e:
+                        print(f"   ❌ Cannot access message: {e}")
+                        continue
+                    
+                    # Create embed with proper format (same as Update & Refresh)
+                    print(f"   🎨 Creating new embed...")
+                    try:
+                        color = discord.Color(int(msg_data.color, 16))
+                        print(f"   🎨 Using color: {msg_data.color}")
+                    except:
+                        color = discord.Color.blurple()
+                        print(f"   🎨 Using default color (blurple)")
+                    
+                    description_text = msg_data.description if msg_data.description else ""
+                    if description_text:
+                        updated_description = f"# {msg_data.title}\n\n{description_text}\n\n-# Message ID: {msg_data.message_id}"
+                    else:
+                        updated_description = f"# {msg_data.title}\n\n-# Message ID: {msg_data.message_id}"
+                    
+                    embed = discord.Embed(
+                        description=updated_description,
+                        color=color
+                    )
+                    
+                    # Create view (should already be registered with bot)
+                    print(f"   🔧 Creating new view...")
+                    view = InteractiveMessageView(msg_data)
+                    
+                    print(f"   📝 Updating Discord message...")
+                    await message.edit(embed=embed, view=view)
+                    refreshed += 1
+                    print(f"   ✅ Successfully refreshed message {msg_data.message_id}")
+                    
+                except Exception as e:
+                    print(f"   ⚠️ Could not refresh message {msg_data.message_id}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+                    
+        except Exception as e:
+            print(f"❌ Error during auto-refresh: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            session.close()
             
         print(f"\n🎉 Auto-refresh complete!")
         if refreshed > 0:

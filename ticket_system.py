@@ -7,7 +7,8 @@ from datetime import datetime
 import discord
 from discord import app_commands
 import asyncio
-from database import get_session, Base
+from database import get_session, Base, engine
+import time
 
 # Database Models for Ticket System
 class InteractiveMessage(Base):
@@ -73,7 +74,8 @@ class IntMsgCreator(Base):
     added_by = Column(String, nullable=False)
     added_at = Column(DateTime, default=datetime.utcnow)
 
-# Tables will be created automatically when each server database is initialized
+# Create tables
+Base.metadata.create_all(bind=engine)
 
 # Discord UI Components
 class InteractiveMessageView(discord.ui.View):
@@ -479,4 +481,37 @@ class ButtonSetupModal(discord.ui.Modal):
             print(f"Error adding button: {e}")
             await interaction.response.send_message("❌ An error occurred while adding the button.", ephemeral=True)
         finally:
-            session.close() 
+            session.close()
+
+async def setup_ticket(interaction: discord.Interaction, button_id: str):
+    """Set up a new ticket"""
+    try:
+        # Create ticket record
+        session = get_session(str(interaction.guild_id))
+        try:
+            ticket = Ticket(
+                ticket_id=f"TICKET-{int(time.time())}",
+                channel_id=str(interaction.channel_id),
+                server_id=str(interaction.guild_id),
+                creator_id=str(interaction.user.id),
+                button_id=button_id,
+                status="open"
+            )
+            session.add(ticket)
+            session.commit()
+            
+            # ... rest of the code ...
+
+async def close_ticket(interaction: discord.Interaction):
+    """Close a ticket"""
+    try:
+        session = get_session(str(interaction.guild_id))
+        try:
+            ticket = session.query(Ticket).filter_by(
+                channel_id=str(interaction.channel_id),
+                status="open"
+            ).first()
+            
+            # ... rest of the code ...
+
+# ... existing code ... 

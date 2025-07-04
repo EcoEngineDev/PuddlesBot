@@ -133,7 +133,6 @@ async def help_command(interaction: discord.Interaction):
             "`/lvlconfig` - **[Admin]** Configure XP rates, cooldowns, and server settings\n"
             "`/testxp @user` - **[Admin]** Test XP system by manually awarding XP\n"
             "`/testvoice @user` - **[Admin]** Test voice XP by simulating voice time\n"
-            "`/voicescan` - **[Admin]** Manual voice scan (auto-scans every 10 min)\n"
             "`/debugxp @user` - **[Admin]** Debug XP system status for a user"
         ),
         inline=False
@@ -159,7 +158,6 @@ async def help_command(interaction: discord.Interaction):
             "• **Task Notifications** - Get DMs when tasks are due soon\n"
             "• **Optimized Performance** - Fast loading for all task commands (2-5 seconds)\n"
             "• **Leveling System** - Dual XP tracking (text/voice) with anti-spam & anti-AFK\n"
-            "• **Auto Voice Tracking** - Automatically detects and tracks users in voice channels\n"
             "• **Ticket System** - Create support tickets with custom questions\n"
             "• **Role Management** - Assign/remove roles with buttons\n"
             "• **Invite Tracking** - Track who joins through whose invites\n"

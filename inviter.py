@@ -91,8 +91,12 @@ class InviteAdmin(Base):
 # Create tables
 def init_invite_tables():
     """Initialize invite tracking tables"""
-    # Tables will be created automatically when each server database is initialized
-    print("✅ Invite tracking tables will be created per server when needed")
+    try:
+        from database import engine
+        Base.metadata.create_all(engine)
+        print("✅ Invite tracking tables initialized")
+    except Exception as e:
+        print(f"❌ Error initializing invite tracking tables: {e}")
 
 # Invite tracking cache to store current invites
 guild_invites_cache = {}
@@ -148,7 +152,7 @@ async def sync_invite_database(guild):
 async def handle_member_join(member):
     """Handle when a member joins - detect which invite was used"""
     guild = member.guild
-    session = get_session(str(guild.id))
+    session = get_session()
     
     try:
         # Get current invites
@@ -245,7 +249,7 @@ async def can_manage_invites(interaction: discord.Interaction) -> bool:
 async def handle_member_leave(member):
     """Handle when a member leaves - update leave statistics"""
     guild = member.guild
-    session = get_session(str(guild.id))
+    session = get_session()
     
     try:
         # Find the join record for this member
@@ -324,7 +328,7 @@ class ResetInvitesConfirmView(discord.ui.View):
         await interaction.response.edit_message(content="🔄 Resetting all invite data...", view=self)
         
         # Reset all invite data
-        session = get_session(str(interaction.guild_id))
+        session = get_session()
         try:
             # Delete all invite stats for this server
             session.query(InviteStats).filter_by(
@@ -430,7 +434,7 @@ class EditInvitesModal(discord.ui.Modal):
                 return
             
             # Update database
-            session = get_session(str(interaction.guild_id))
+            session = get_session()
             try:
                 if self.current_stats:
                     # Update existing stats
@@ -534,7 +538,7 @@ async def editinvites(interaction: discord.Interaction, user: discord.Member):
         return
     
     # Get current stats
-    session = get_session(str(interaction.guild_id))
+    session = get_session()
     try:
         current_stats = session.query(InviteStats).filter_by(
             guild_id=str(interaction.guild_id),
@@ -572,7 +576,7 @@ async def invw(interaction: discord.Interaction, user: discord.Member, action: s
         )
         return
     
-    session = get_session(str(interaction.guild_id))
+    session = get_session()
     try:
         existing_admin = session.query(InviteAdmin).filter_by(
             user_id=str(user.id),
@@ -634,7 +638,7 @@ async def invw(interaction: discord.Interaction, user: discord.Member, action: s
 @log_command
 async def topinvite(interaction: discord.Interaction):
     """Show top inviters with their statistics"""
-    session = get_session(str(interaction.guild_id))
+    session = get_session()
     try:
         # Get top 10 inviters by net invites
         top_inviters = session.query(InviteStats).filter_by(
@@ -716,7 +720,7 @@ async def topinvite(interaction: discord.Interaction):
 @log_command
 async def showinvites(interaction: discord.Interaction, user: discord.Member):
     """Show detailed invite statistics for a specific user"""
-    session = get_session(str(interaction.guild_id))
+    session = get_session()
     try:
         # Get user's invite stats
         stats = session.query(InviteStats).filter_by(
@@ -839,17 +843,21 @@ async def invitereset(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
     try:
-        # Get server-specific session
-        session = get_session(str(interaction.guild_id))
+        from database import engine
         
-        # Delete all data from tables
-        session.query(InviteTracker).filter_by(guild_id=str(interaction.guild_id)).delete()
-        session.query(InviteJoin).filter_by(guild_id=str(interaction.guild_id)).delete()
-        session.query(InviteStats).filter_by(guild_id=str(interaction.guild_id)).delete()
-        session.query(InviteAdmin).filter_by(server_id=str(interaction.guild_id)).delete()
-        
-        session.commit()
-        session.close()
+        # Drop and recreate tables
+        Base.metadata.drop_all(engine, tables=[
+            InviteTracker.__table__,
+            InviteJoin.__table__,
+            InviteStats.__table__,
+            InviteAdmin.__table__
+        ])
+        Base.metadata.create_all(engine, tables=[
+            InviteTracker.__table__,
+            InviteJoin.__table__,
+            InviteStats.__table__,
+            InviteAdmin.__table__
+        ])
         
         # Re-sync invite data
         guild = interaction.guild
@@ -858,7 +866,7 @@ async def invitereset(interaction: discord.Interaction):
         
         await interaction.followup.send(
             "⚠️ **Invite tracking tables reset successfully!**\n\n"
-            "All previous invite data has been deleted.\n"
+            "All previous invite data has been deleted and tables recreated.\n"
             "The system will now start tracking fresh from current invites.",
             ephemeral=True
         )
@@ -878,7 +886,7 @@ async def invitereset(interaction: discord.Interaction):
 @log_command
 async def invitestats(interaction: discord.Interaction):
     """Show comprehensive server invite statistics"""
-    session = get_session(str(interaction.guild_id))
+    session = get_session()
     try:
         guild_id = str(interaction.guild_id)
         
