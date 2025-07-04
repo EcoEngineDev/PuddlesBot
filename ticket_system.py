@@ -7,7 +7,7 @@ from datetime import datetime
 import discord
 from discord import app_commands
 import asyncio
-from database import get_session, Base, engine
+from database import get_session, Base
 import time
 
 # Database Models for Ticket System
@@ -73,9 +73,6 @@ class IntMsgCreator(Base):
     server_id = Column(String, nullable=False)
     added_by = Column(String, nullable=False)
     added_at = Column(DateTime, default=datetime.utcnow)
-
-# Create tables
-Base.metadata.create_all(bind=engine)
 
 # Discord UI Components
 class InteractiveMessageView(discord.ui.View):

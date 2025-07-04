@@ -89,12 +89,16 @@ class InviteAdmin(Base):
     added_at = Column(DateTime, default=datetime.utcnow)
 
 # Create tables
-def init_invite_tables():
+def init_invite_tables(server_id: str = None):
     """Initialize invite tracking tables"""
     try:
-        from database import engine
-        Base.metadata.create_all(engine)
-        print("✅ Invite tracking tables initialized")
+        if server_id:
+            # Initialize tables for a specific server
+            session = get_session(server_id)
+            session.close()
+            print(f"✅ Invite tracking tables initialized for server {server_id}")
+        else:
+            print("⚠️ No server ID provided - tables will be created when servers are accessed")
     except Exception as e:
         print(f"❌ Error initializing invite tracking tables: {e}")
 
@@ -152,7 +156,7 @@ async def sync_invite_database(guild):
 async def handle_member_join(member):
     """Handle when a member joins - detect which invite was used"""
     guild = member.guild
-    session = get_session()
+    session = get_session(str(guild.id))
     
     try:
         # Get current invites
@@ -249,7 +253,7 @@ async def can_manage_invites(interaction: discord.Interaction) -> bool:
 async def handle_member_leave(member):
     """Handle when a member leaves - update leave statistics"""
     guild = member.guild
-    session = get_session()
+    session = get_session(str(guild.id))
     
     try:
         # Find the join record for this member
@@ -843,21 +847,16 @@ async def invitereset(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
     try:
-        from database import engine
+        # Get a session for this server
+        session = get_session(str(interaction.guild_id))
         
-        # Drop and recreate tables
-        Base.metadata.drop_all(engine, tables=[
-            InviteTracker.__table__,
-            InviteJoin.__table__,
-            InviteStats.__table__,
-            InviteAdmin.__table__
-        ])
-        Base.metadata.create_all(engine, tables=[
-            InviteTracker.__table__,
-            InviteJoin.__table__,
-            InviteStats.__table__,
-            InviteAdmin.__table__
-        ])
+        # Delete all data for this server
+        session.query(InviteTracker).filter_by(guild_id=str(interaction.guild_id)).delete()
+        session.query(InviteJoin).filter_by(guild_id=str(interaction.guild_id)).delete()
+        session.query(InviteStats).filter_by(guild_id=str(interaction.guild_id)).delete()
+        session.query(InviteAdmin).filter_by(server_id=str(interaction.guild_id)).delete()
+        session.commit()
+        session.close()
         
         # Re-sync invite data
         guild = interaction.guild
@@ -865,8 +864,8 @@ async def invitereset(interaction: discord.Interaction):
         await update_invite_cache(guild)
         
         await interaction.followup.send(
-            "⚠️ **Invite tracking tables reset successfully!**\n\n"
-            "All previous invite data has been deleted and tables recreated.\n"
+            "⚠️ **Invite tracking data reset successfully!**\n\n"
+            "All previous invite data for this server has been deleted.\n"
             "The system will now start tracking fresh from current invites.",
             ephemeral=True
         )
@@ -874,7 +873,7 @@ async def invitereset(interaction: discord.Interaction):
     except Exception as e:
         print(f"Error in invitereset command: {e}")
         await interaction.followup.send(
-            f"❌ An error occurred while resetting invite tables: {str(e)}",
+            f"❌ An error occurred while resetting invite data: {str(e)}",
             ephemeral=True
         )
 
@@ -886,7 +885,7 @@ async def invitereset(interaction: discord.Interaction):
 @log_command
 async def invitestats(interaction: discord.Interaction):
     """Show comprehensive server invite statistics"""
-    session = get_session()
+    session = get_session(str(interaction.guild_id))
     try:
         guild_id = str(interaction.guild_id)
         
