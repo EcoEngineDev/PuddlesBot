@@ -5,8 +5,7 @@ import functools
 from typing import Callable, Any, Optional
 import traceback
 from datetime import datetime
-from database import get_session
-import sqlalchemy
+from database import get_session, get_engine, Base
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, desc, func
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -89,18 +88,8 @@ class InviteAdmin(Base):
     added_at = Column(DateTime, default=datetime.utcnow)
 
 # Create tables
-def init_invite_tables(server_id: str = None):
-    """Initialize invite tracking tables"""
-    try:
-        if server_id:
-            # Initialize tables for a specific server
-            session = get_session(server_id)
-            session.close()
-            print(f"✅ Invite tracking tables initialized for server {server_id}")
-        else:
-            print("⚠️ No server ID provided - tables will be created when servers are accessed")
-    except Exception as e:
-        print(f"❌ Error initializing invite tracking tables: {e}")
+def init_invite_db(server_id):
+    Base.metadata.create_all(bind=get_engine(server_id))
 
 # Invite tracking cache to store current invites
 guild_invites_cache = {}
@@ -118,6 +107,7 @@ async def update_invite_cache(guild):
 
 async def sync_invite_database(guild):
     """Sync current Discord invites with database"""
+    init_invite_db(str(guild.id))
     session = get_session(str(guild.id))
     try:
         invites = await guild.invites()
@@ -156,6 +146,7 @@ async def sync_invite_database(guild):
 async def handle_member_join(member):
     """Handle when a member joins - detect which invite was used"""
     guild = member.guild
+    init_invite_db(str(guild.id))
     session = get_session(str(guild.id))
     
     try:
@@ -237,6 +228,7 @@ async def can_manage_invites(interaction: discord.Interaction) -> bool:
         return True
     
     # Check if user is in invite admin whitelist
+    init_invite_db(str(interaction.guild_id))
     session = get_session(str(interaction.guild_id))
     try:
         admin_record = session.query(InviteAdmin).filter_by(
@@ -253,6 +245,7 @@ async def can_manage_invites(interaction: discord.Interaction) -> bool:
 async def handle_member_leave(member):
     """Handle when a member leaves - update leave statistics"""
     guild = member.guild
+    init_invite_db(str(guild.id))
     session = get_session(str(guild.id))
     
     try:
@@ -332,7 +325,7 @@ class ResetInvitesConfirmView(discord.ui.View):
         await interaction.response.edit_message(content="🔄 Resetting all invite data...", view=self)
         
         # Reset all invite data
-        session = get_session()
+        session = get_session(str(interaction.guild_id))
         try:
             # Delete all invite stats for this server
             session.query(InviteStats).filter_by(
@@ -438,7 +431,7 @@ class EditInvitesModal(discord.ui.Modal):
                 return
             
             # Update database
-            session = get_session()
+            session = get_session(str(interaction.guild_id))
             try:
                 if self.current_stats:
                     # Update existing stats
@@ -542,7 +535,8 @@ async def editinvites(interaction: discord.Interaction, user: discord.Member):
         return
     
     # Get current stats
-    session = get_session()
+    init_invite_db(str(interaction.guild_id))
+    session = get_session(str(interaction.guild_id))
     try:
         current_stats = session.query(InviteStats).filter_by(
             guild_id=str(interaction.guild_id),
@@ -580,7 +574,8 @@ async def invw(interaction: discord.Interaction, user: discord.Member, action: s
         )
         return
     
-    session = get_session()
+    init_invite_db(str(interaction.guild_id))
+    session = get_session(str(interaction.guild_id))
     try:
         existing_admin = session.query(InviteAdmin).filter_by(
             user_id=str(user.id),
@@ -642,7 +637,8 @@ async def invw(interaction: discord.Interaction, user: discord.Member, action: s
 @log_command
 async def topinvite(interaction: discord.Interaction):
     """Show top inviters with their statistics"""
-    session = get_session()
+    init_invite_db(str(interaction.guild_id))
+    session = get_session(str(interaction.guild_id))
     try:
         # Get top 10 inviters by net invites
         top_inviters = session.query(InviteStats).filter_by(
@@ -724,7 +720,8 @@ async def topinvite(interaction: discord.Interaction):
 @log_command
 async def showinvites(interaction: discord.Interaction, user: discord.Member):
     """Show detailed invite statistics for a specific user"""
-    session = get_session()
+    init_invite_db(str(interaction.guild_id))
+    session = get_session(str(interaction.guild_id))
     try:
         # Get user's invite stats
         stats = session.query(InviteStats).filter_by(
@@ -847,16 +844,23 @@ async def invitereset(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
     try:
-        # Get a session for this server
-        session = get_session(str(interaction.guild_id))
-        
-        # Delete all data for this server
-        session.query(InviteTracker).filter_by(guild_id=str(interaction.guild_id)).delete()
-        session.query(InviteJoin).filter_by(guild_id=str(interaction.guild_id)).delete()
-        session.query(InviteStats).filter_by(guild_id=str(interaction.guild_id)).delete()
-        session.query(InviteAdmin).filter_by(server_id=str(interaction.guild_id)).delete()
-        session.commit()
-        session.close()
+        # Drop and recreate tables
+        # You must call this with the correct server_id when dropping tables
+        # Example: Base.metadata.drop_all(bind=get_engine(server_id), tables=[
+        Base.metadata.drop_all(bind=get_engine(interaction.guild_id), tables=[
+            InviteTracker.__table__,
+            InviteJoin.__table__,
+            InviteStats.__table__,
+            InviteAdmin.__table__
+        ])
+        # You must call this with the correct server_id when creating tables
+        # Example: Base.metadata.create_all(bind=get_engine(server_id), tables=[
+        Base.metadata.create_all(bind=get_engine(interaction.guild_id), tables=[
+            InviteTracker.__table__,
+            InviteJoin.__table__,
+            InviteStats.__table__,
+            InviteAdmin.__table__
+        ])
         
         # Re-sync invite data
         guild = interaction.guild
@@ -864,8 +868,8 @@ async def invitereset(interaction: discord.Interaction):
         await update_invite_cache(guild)
         
         await interaction.followup.send(
-            "⚠️ **Invite tracking data reset successfully!**\n\n"
-            "All previous invite data for this server has been deleted.\n"
+            "⚠️ **Invite tracking tables reset successfully!**\n\n"
+            "All previous invite data has been deleted and tables recreated.\n"
             "The system will now start tracking fresh from current invites.",
             ephemeral=True
         )
@@ -873,7 +877,7 @@ async def invitereset(interaction: discord.Interaction):
     except Exception as e:
         print(f"Error in invitereset command: {e}")
         await interaction.followup.send(
-            f"❌ An error occurred while resetting invite data: {str(e)}",
+            f"❌ An error occurred while resetting invite tables: {str(e)}",
             ephemeral=True
         )
 
@@ -885,6 +889,7 @@ async def invitereset(interaction: discord.Interaction):
 @log_command
 async def invitestats(interaction: discord.Interaction):
     """Show comprehensive server invite statistics"""
+    init_invite_db(str(interaction.guild_id))
     session = get_session(str(interaction.guild_id))
     try:
         guild_id = str(interaction.guild_id)
@@ -990,7 +995,4 @@ async def on_ready():
         for guild in _client.guilds:
             await sync_invite_database(guild)
             await update_invite_cache(guild)
-        print("✅ Invite tracking system ready!")
-
-# Initialize database tables when module is imported
-init_invite_tables() 
+        print("✅ Invite tracking system ready!") 

@@ -37,18 +37,54 @@ class Settings:
         self.mongodb_name: str = settings.get("mongodb_name")
         
         self.invite_link: str = "https://discord.gg/wRCgB7vBQv"
-        self.nodes: Dict[str, Dict[str, Union[str, int, bool]]] = settings.get("nodes", {})
+        
+        # Handle nodes with proper boolean conversion
+        nodes = settings.get("nodes", {})
+        for node in nodes.values():
+            if "secure" in node:
+                node["secure"] = self._parse_bool(node["secure"])
+        self.nodes: Dict[str, Dict[str, Union[str, int, bool]]] = nodes
+        
         self.max_queue: int = settings.get("default_max_queue", 1000)
         self.bot_prefix: str = settings.get("prefix", "")
         self.activity: List[Dict[str, str]] = settings.get("activity", [{"listen": "/help"}])
-        self.logging: Dict[Union[str, Dict[str, Union[str, bool]]]] = settings.get("logging", {})
-        self.embed_color: str = int(settings.get("embed_color", "0xb3b3b3"), 16)
+        
+        # Handle logging with proper boolean conversion
+        logging_settings = settings.get("logging", {})
+        if "file" in logging_settings and "enable" in logging_settings["file"]:
+            logging_settings["file"]["enable"] = self._parse_bool(logging_settings["file"]["enable"])
+        self.logging: Dict[Union[str, Dict[str, Union[str, bool]]]] = logging_settings
+        
+        self.embed_color: int = int(settings.get("embed_color", "0xb3b3b3"), 16)
         self.bot_access_user: List[int] = settings.get("bot_access_user", [])
         self.sources_settings: Dict[Dict[str, str]] = settings.get("sources_settings", {})
         self.cooldowns_settings: Dict[str, List[int]] = settings.get("cooldowns", {})
         self.aliases_settings: Dict[str, List[str]] = settings.get("aliases", {})
-        self.controller: Dict[str, Dict[str, Any]] = settings.get("default_controller", {})
+        
+        # Handle controller with proper boolean conversion
+        controller = settings.get("default_controller", {})
+        if "disableButtonText" in controller:
+            controller["disableButtonText"] = self._parse_bool(controller["disableButtonText"])
+        self.controller: Dict[str, Dict[str, Any]] = controller
+        
         self.voice_status_template: str = settings.get("default_voice_status_template", "")
         self.lyrics_platform: str = settings.get("lyrics_platform", "A_ZLyrics").lower()
-        self.ipc_client: Dict[str, Union[str, bool, int]] = settings.get("ipc_client", {})
+        
+        # Handle IPC client with proper boolean conversion
+        ipc_settings = settings.get("ipc_client", {})
+        for key in ["enable", "secure"]:
+            if key in ipc_settings:
+                ipc_settings[key] = self._parse_bool(ipc_settings[key])
+        self.ipc_client: Dict[str, Union[str, bool, int]] = ipc_settings
+        
         self.version: str = settings.get("version", "")
+
+    def _parse_bool(self, value) -> bool:
+        """Convert various boolean representations to Python bool"""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in ('true', 't', 'yes', 'y', 'on', '1')
+        if isinstance(value, int):
+            return bool(value)
+        return False

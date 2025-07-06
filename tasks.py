@@ -593,6 +593,126 @@ class PaginatedCompletedTaskView(discord.ui.View):
         embed = self.get_current_page_embed()
         await interaction.response.edit_message(embed=embed, view=self)
 
+class TaskCreationModal(discord.ui.Modal):
+    def __init__(self, assigned_user: discord.Member):
+        super().__init__(title="Create New Task")
+        
+        self.assigned_user = assigned_user
+        
+        self.name = discord.ui.TextInput(
+            label="Task Name",
+            placeholder="Enter a name for the task...",
+            required=True,
+            max_length=256
+        )
+        self.add_item(self.name)
+        
+        self.description = discord.ui.TextInput(
+            label="Task Description",
+            placeholder="Enter a detailed description of the task...",
+            style=discord.TextStyle.paragraph,
+            required=True,
+            max_length=1000
+        )
+        self.add_item(self.description)
+        
+        self.due_date = discord.ui.TextInput(
+            label="Due Date (YYYY-MM-DD HH:MM)",
+            placeholder="Example: 2024-12-31 23:59",
+            required=True,
+            max_length=16
+        )
+        self.add_item(self.due_date)
+        
+        self.send_dm = discord.ui.TextInput(
+            label="Send DM to assignee? (yes/no)",
+            placeholder="Type 'yes' or 'no'",
+            required=True,
+            max_length=3,
+            default="yes"
+        )
+        self.add_item(self.send_dm)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        # Check if user can create tasks
+        if not await can_create_tasks(interaction):
+            await interaction.response.send_message(
+                "❌ You don't have permission to create tasks!\n\n"
+                "Only administrators or whitelisted users can use this command.\n"
+                "Ask an admin to add you with `/tcw add @user`",
+                ephemeral=True
+            )
+            return
+        
+        try:
+            # Parse the due date
+            parsed_date = parser.parse(self.due_date.value)
+            
+            # Parse send_dm value
+            send_dm = self.send_dm.value.lower() in ('yes', 'y', 'true', '1')
+            
+            # Create the task
+            session = get_session(str(interaction.guild_id))
+            try:
+                new_task = Task(
+                    name=self.name.value,
+                    description=self.description.value,
+                    assigned_to=str(self.assigned_user.id),
+                    due_date=parsed_date,
+                    server_id=str(interaction.guild_id),
+                    created_by=str(interaction.user.id)
+                )
+                session.add(new_task)
+                session.commit()
+                
+                embed = discord.Embed(
+                    title="✅ Task Created Successfully!",
+                    color=discord.Color.green()
+                )
+                embed.add_field(name="Task Name", value=self.name.value, inline=False)
+                embed.add_field(name="Assigned To", value=self.assigned_user.mention, inline=True)
+                embed.add_field(name="Due Date", value=parsed_date.strftime('%Y-%m-%d %H:%M UTC'), inline=True)
+                embed.add_field(name="Description", value=self.description.value, inline=False)
+                embed.set_footer(text=f"Created by {interaction.user.display_name}")
+                
+                await interaction.response.send_message(embed=embed)
+                
+                # Send DM to assigned user if requested
+                if send_dm:
+                    try:
+                        dm_embed = discord.Embed(
+                            title="📋 New Task Assigned",
+                            description=f"You have been assigned a new task in **{interaction.guild.name}**",
+                            color=discord.Color.blue()
+                        )
+                        dm_embed.add_field(name="Task", value=self.name.value, inline=False)
+                        dm_embed.add_field(name="Due Date", value=parsed_date.strftime('%Y-%m-%d %H:%M UTC'), inline=True)
+                        dm_embed.add_field(name="Assigned By", value=interaction.user.display_name, inline=True)
+                        dm_embed.add_field(name="Description", value=self.description.value, inline=False)
+                        dm_embed.set_footer(text="Use /mytasks to view all your tasks")
+                        await self.assigned_user.send(embed=dm_embed)
+                    except discord.Forbidden:
+                        # User has DMs disabled
+                        pass
+                
+            finally:
+                session.close()
+                
+        except ValueError as e:
+            await interaction.response.send_message(
+                f"❌ Invalid date format! Please use YYYY-MM-DD HH:MM format (24-hour).\n"
+                f"Example: 2024-01-15 14:30\n\n"
+                f"Error details: {str(e)}",
+                ephemeral=True
+            )
+        except Exception as e:
+            print(f"Error creating task: {str(e)}")
+            print(traceback.format_exc())
+            await interaction.response.send_message(
+                f"An error occurred while creating the task: {str(e)}",
+                ephemeral=True
+            )
+
 def setup_task_commands(tree: app_commands.CommandTree):
     """Setup task management commands"""
     
@@ -676,13 +796,10 @@ def setup_task_commands(tree: app_commands.CommandTree):
         description="Create a new task"
     )
     @app_commands.describe(
-        name="Name of the task",
-        assigned_to="User to assign the task to (mention the user)",
-        due_date="Due date in YYYY-MM-DD HH:MM format (24-hour)",
-        description="Description of the task"
+        assigned_to="User to assign the task to (mention the user)"
     )
     @log_command
-    async def task(interaction: discord.Interaction, name: str, assigned_to: discord.Member, due_date: str, description: str):
+    async def task(interaction: discord.Interaction, assigned_to: discord.Member):
         # Check if user can create tasks
         if not await can_create_tasks(interaction):
             await interaction.response.send_message(
@@ -693,71 +810,9 @@ def setup_task_commands(tree: app_commands.CommandTree):
             )
             return
         
-        try:
-            # Parse the due date
-            parsed_date = parser.parse(due_date)
-            
-            # Create the task
-            session = get_session(str(interaction.guild_id))
-            try:
-                new_task = Task(
-                    name=name,
-                    description=description,
-                    assigned_to=str(assigned_to.id),
-                    due_date=parsed_date,
-                    server_id=str(interaction.guild_id),
-                    created_by=str(interaction.user.id)
-                )
-                session.add(new_task)
-                session.commit()
-                
-                embed = discord.Embed(
-                    title="✅ Task Created Successfully!",
-                    color=discord.Color.green()
-                )
-                embed.add_field(name="Task Name", value=name, inline=False)
-                embed.add_field(name="Assigned To", value=assigned_to.mention, inline=True)
-                embed.add_field(name="Due Date", value=parsed_date.strftime('%Y-%m-%d %H:%M UTC'), inline=True)
-                embed.add_field(name="Description", value=description, inline=False)
-                embed.set_footer(text=f"Created by {interaction.user.display_name}")
-                
-                await interaction.response.send_message(embed=embed)
-                
-                # Send DM to assigned user
-                try:
-                    dm_embed = discord.Embed(
-                        title="📋 New Task Assigned",
-                        description=f"You have been assigned a new task in **{interaction.guild.name}**",
-                        color=discord.Color.blue()
-                    )
-                    dm_embed.add_field(name="Task", value=name, inline=False)
-                    dm_embed.add_field(name="Due Date", value=parsed_date.strftime('%Y-%m-%d %H:%M UTC'), inline=True)
-                    dm_embed.add_field(name="Assigned By", value=interaction.user.display_name, inline=True)
-                    dm_embed.add_field(name="Description", value=description, inline=False)
-                    dm_embed.set_footer(text="Use /mytasks to view all your tasks")
-                    
-                    await assigned_to.send(embed=dm_embed)
-                except discord.Forbidden:
-                    # User has DMs disabled
-                    pass
-                
-            finally:
-                session.close()
-                
-        except ValueError as e:
-            await interaction.response.send_message(
-                f"❌ Invalid date format! Please use YYYY-MM-DD HH:MM format (24-hour).\n"
-                f"Example: 2024-01-15 14:30\n\n"
-                f"Error details: {str(e)}",
-                ephemeral=True
-            )
-        except Exception as e:
-            print(f"Error creating task: {str(e)}")
-            print(traceback.format_exc())
-            await interaction.response.send_message(
-                f"An error occurred while creating the task: {str(e)}",
-                ephemeral=True
-            )
+        # Show the task creation modal with pre-selected user
+        modal = TaskCreationModal(assigned_to)
+        await interaction.response.send_modal(modal)
 
     @tree.command(
         name="mytasks",
@@ -980,9 +1035,8 @@ def setup_task_commands(tree: app_commands.CommandTree):
 
     @tree.command(
         name="alltasks",
-        description="View all active tasks in the server (Admin only)"
+        description="View all active tasks in the server"
     )
-    @checks.has_permissions(administrator=True)
     @log_command
     async def alltasks(interaction: discord.Interaction):
         session = get_session(str(interaction.guild_id))

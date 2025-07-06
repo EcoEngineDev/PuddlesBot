@@ -118,41 +118,48 @@ class Basic(commands.Cog):
     @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
     async def play(self, ctx: commands.Context, *, query: str, start: str = "0", end: str = "0") -> None:
         "Loads your input and added it to the queue."
-        player: voicelink.Player = ctx.guild.voice_client
-        if not player:
-            player = await voicelink.connect_channel(ctx)
-
-        if not player.is_user_join(ctx.author):
-            return await send(ctx, "notInChannel", ctx.author.mention, player.channel.mention, ephemeral=True)
-
-        if ctx.interaction:
-            await ctx.interaction.response.defer()
-
-        tracks = await player.get_tracks(query, requester=ctx.author)
-        if not tracks:
-            return await send(ctx, "noTrackFound")
-
         try:
-            if isinstance(tracks, voicelink.Playlist):
-                index = await player.add_track(tracks.tracks, start_time=format_time(start), end_time=format_time(end))
-                await send(ctx, "playlistLoad", tracks.name, index)
-            else:
-                position = await player.add_track(tracks[0], start_time=format_time(start), end_time=format_time(end))
-                texts = await get_lang(ctx.guild.id, "live", "trackLoad_pos", "trackLoad")
+            player: voicelink.Player = ctx.guild.voice_client
+            if not player:
+                player = await voicelink.connect_channel(ctx)
 
-                stream_content = f"`{texts[0]}`" if tracks[0].is_stream else ""
-                additional_content = texts[1] if position >= 1 and player.is_playing else texts[2]
+            if not player.is_user_join(ctx.author):
+                return await send(ctx, "notInChannel", ctx.author.mention, player.channel.mention, ephemeral=True)
 
-                await send(
-                    ctx,
-                    stream_content + additional_content,
-                    tracks[0].title, tracks[0].uri, tracks[0].author, tracks[0].formatted_length,
-                    position if position >= 1 and player.is_playing else None
-                )
-        finally:
-            if not player.is_playing:
-                await player.do_next()
-    
+            if ctx.interaction:
+                await ctx.interaction.response.defer()
+
+            tracks = await player.get_tracks(query, requester=ctx.author)
+            if not tracks:
+                return await send(ctx, "noTrackFound")
+
+            try:
+                if isinstance(tracks, voicelink.Playlist):
+                    index = await player.add_track(tracks.tracks, start_time=format_time(start), end_time=format_time(end))
+                    await send(ctx, "playlistLoad", tracks.name, index)
+                else:
+                    position = await player.add_track(tracks[0], start_time=format_time(start), end_time=format_time(end))
+                    texts = await get_lang(ctx.guild.id, "live", "trackLoad_pos", "trackLoad")
+
+                    stream_content = f"`{texts[0]}`" if tracks[0].is_stream else ""
+                    additional_content = texts[1] if position >= 1 and player.is_playing else texts[2]
+
+                    await send(
+                        ctx,
+                        stream_content + additional_content,
+                        tracks[0].title, tracks[0].uri, tracks[0].author, tracks[0].formatted_length,
+                        position if position >= 1 and player.is_playing else None
+                    )
+            finally:
+                if not player.is_playing:
+                    await player.do_next()
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in play command: {e}")
+            print("[DEBUG] Error in play command:", e)
+            traceback.print_exc()
+            await send(ctx, "An error occurred while playing the track. Please try again.", ephemeral=True)
+
     @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
     async def _play(self, interaction: discord.Interaction, message: discord.Message):
         query = ""

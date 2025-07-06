@@ -479,17 +479,36 @@ class InteractiveController(discord.ui.View):
         super().__init__(timeout=None)
 
         self.player: voicelink.Player = player
-        for row, btnRow in enumerate(func.settings.controller.get("default_buttons")):
+        
+        # Get default buttons from settings or use hardcoded defaults
+        default_buttons = [
+            ["back", "resume", "skip", {"stop": "red"}, "add"],
+            ["tracks"]
+        ]
+        
+        try:
+            if hasattr(func.settings, 'controller'):
+                settings_buttons = func.settings.controller.get("default_buttons")
+                if settings_buttons:
+                    default_buttons = settings_buttons
+        except Exception as e:
+            self.player._logger.warning(f"Failed to get controller buttons from settings: {e}")
+        
+        for row, btnRow in enumerate(default_buttons):
             for btn in btnRow:
-                color = ""
-                if isinstance(btn, Dict):
-                    color = list(btn.values())[0]
-                    btn = list(btn.keys())[0]
-                btnClass = BUTTON_TYPE.get(btn.lower())
-                style = BUTTON_COLORS.get(color.lower(), BUTTON_COLORS["grey"])
-                if not btnClass or (self.player.queue.is_empty and btn == "tracks"):
+                try:
+                    color = ""
+                    if isinstance(btn, dict):
+                        color = list(btn.values())[0]
+                        btn = list(btn.keys())[0]
+                    btnClass = BUTTON_TYPE.get(btn.lower())
+                    style = BUTTON_COLORS.get(color.lower(), BUTTON_COLORS["grey"])
+                    if not btnClass or (self.player.queue.is_empty and btn == "tracks"):
+                        continue
+                    self.add_item(btnClass(player=player, style=style, row=row))
+                except Exception as e:
+                    self.player._logger.warning(f"Failed to add button {btn}: {e}")
                     continue
-                self.add_item(btnClass(player=player, style=style, row=row))
 
         self.cooldown = commands.CooldownMapping.from_cooldown(2.0, 10.0, key)
             
@@ -498,8 +517,12 @@ class InteractiveController(discord.ui.View):
             await func.send(interaction, "nodeReconnect", ephemeral=True)
             return False
 
-        if interaction.user.id in func.settings.bot_access_user:
-            return True
+        try:
+            bot_access_users = getattr(func.settings, 'bot_access_user', [])
+            if interaction.user.id in bot_access_users:
+                return True
+        except Exception:
+            pass
             
         if self.player.channel and self.player.is_user_join(interaction.user):
             retry_after = self.cooldown.update_rate_limit(interaction)
@@ -516,6 +539,6 @@ class InteractiveController(discord.ui.View):
             await interaction.response.send_message(f"You're on cooldown for {sec} second{'' if sec == 1 else 's'}!", ephemeral=True)
         
         elif isinstance(error, Exception):
-            await interaction.response.send_message(error)
+            await interaction.response.send_message(str(error))
             
         return

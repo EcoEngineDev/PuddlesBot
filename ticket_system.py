@@ -7,8 +7,7 @@ from datetime import datetime
 import discord
 from discord import app_commands
 import asyncio
-from database import get_session, Base
-import time
+from database import get_session, Base, get_engine
 
 # Database Models for Ticket System
 class InteractiveMessage(Base):
@@ -74,6 +73,10 @@ class IntMsgCreator(Base):
     added_by = Column(String, nullable=False)
     added_at = Column(DateTime, default=datetime.utcnow)
 
+# Helper to initialize ticket DB for a server
+def init_ticket_db(server_id):
+    Base.metadata.create_all(bind=get_engine(server_id))
+
 # Discord UI Components
 class InteractiveMessageView(discord.ui.View):
     def __init__(self, message_data):
@@ -117,7 +120,7 @@ class TicketButton(discord.ui.Button):
         await self.create_ticket(interaction)
     
     async def create_ticket(self, interaction, answers=None):
-        session = get_session(str(interaction.guild_id))
+        session = get_session(str(interaction.guild.id))
         try:
             # Check existing ticket
             existing_ticket = session.query(Ticket).filter_by(
@@ -340,7 +343,7 @@ class TicketControlView(discord.ui.View):
     
     @discord.ui.button(label="🔒 Close Ticket", style=discord.ButtonStyle.danger, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        session = get_session(str(interaction.guild_id))
+        session = get_session(str(interaction.guild.id))
         try:
             ticket = session.query(Ticket).get(self.ticket_db_id)
             if not ticket:
@@ -441,7 +444,7 @@ class ButtonSetupModal(discord.ui.Modal):
             self.add_item(self.role_info)
     
     async def on_submit(self, interaction: discord.Interaction):
-        session = get_session(str(interaction.guild_id))
+        session = get_session(str(interaction.guild.id))
         try:
             interactive_msg = session.query(InteractiveMessage).get(self.message_id)
             if not interactive_msg:
@@ -478,76 +481,4 @@ class ButtonSetupModal(discord.ui.Modal):
             print(f"Error adding button: {e}")
             await interaction.response.send_message("❌ An error occurred while adding the button.", ephemeral=True)
         finally:
-            session.close()
-
-async def setup_ticket(interaction: discord.Interaction, button_id: str):
-    """Set up a new ticket"""
-    try:
-        # Create ticket record
-        session = get_session(str(interaction.guild_id))
-        try:
-            ticket = Ticket(
-                ticket_id=f"TICKET-{int(time.time())}",
-                channel_id=str(interaction.channel_id),
-                server_id=str(interaction.guild_id),
-                creator_id=str(interaction.user.id),
-                button_id=button_id,
-                status="open"
-            )
-            session.add(ticket)
-            session.commit()
-            return ticket
-        except Exception as e:
-            print(f"Error creating ticket: {e}")
-            session.rollback()
-            raise
-        finally:
-            session.close()
-    except Exception as e:
-        print(f"Error in setup_ticket: {e}")
-        return None
-
-async def close_ticket(interaction: discord.Interaction):
-    """Close a ticket"""
-    try:
-        session = get_session(str(interaction.guild_id))
-        try:
-            ticket = session.query(Ticket).filter_by(
-                channel_id=str(interaction.channel_id),
-                status="open"
-            ).first()
-            
-            if not ticket:
-                await interaction.response.send_message("❌ No open ticket found for this channel!", ephemeral=True)
-                return
-            
-            # Update ticket status
-            ticket.status = "closed"
-            ticket.closed_at = datetime.utcnow()
-            ticket.closed_by = str(interaction.user.id)
-            session.commit()
-            
-            # Send confirmation
-            embed = discord.Embed(
-                title="🔒 Ticket Closed",
-                description=f"This ticket has been closed by {interaction.user.mention}",
-                color=discord.Color.red(),
-                timestamp=datetime.utcnow()
-            )
-            await interaction.response.send_message(embed=embed)
-            
-            # Delete channel after delay
-            await asyncio.sleep(10)
-            await interaction.channel.delete()
-            
-        except Exception as e:
-            print(f"Error closing ticket: {e}")
-            session.rollback()
-            await interaction.response.send_message("❌ An error occurred while closing the ticket.", ephemeral=True)
-        finally:
-            session.close()
-    except Exception as e:
-        print(f"Error in close_ticket: {e}")
-        await interaction.response.send_message("❌ An error occurred while closing the ticket.", ephemeral=True)
-
-# ... existing code ... 
+            session.close() 

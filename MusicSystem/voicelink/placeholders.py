@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import function as func
+import logging
 
 from discord import Embed, Client
 
@@ -175,6 +176,9 @@ class Placeholders:
                 expression = re.sub(r"'(\d+)'", lambda x: str(int(x.group(1))), expression)
                 expression = re.sub(r"'(\d+)'\s*([><=!]+)\s*(\d+)", lambda x: f"{int(x.group(1))} {x.group(2)} {int(x.group(3))}", expression)
 
+                # Convert JSON-style booleans to Python booleans
+                expression = expression.replace('false', 'False').replace('true', 'True')
+
                 # Evaluate the expression
                 result = eval(expression, {"__builtins__": None}, variables)
 
@@ -189,40 +193,96 @@ class Placeholders:
         return text
     
 def build_embed(raw: dict[str, dict], placeholder: Placeholders) -> Embed:
+    logger = logging.getLogger("vocard.embed")
     embed = Embed()
     try:
         rv = {key: func() if callable(func) else func for key, func in placeholder.variables.items()}
-        if author := raw.get("author"):
-            embed.set_author(
-                name = placeholder.replace(author.get("name"), rv),
-                url = placeholder.replace(author.get("url"), rv),
-                icon_url = placeholder.replace(author.get("icon_url"), rv)
-            )
         
-        if title := raw.get("title"):
-            embed.title = placeholder.replace(title.get("name"), rv)
-            embed.url = placeholder.replace(title.get("url"), rv)
+        # Description - Handle this first to ensure it's always set
+        try:
+            desc = placeholder.replace(raw.get("description", ""), rv)
+            if not desc or not isinstance(desc, str) or desc.isspace():
+                desc = "No description available"  # More meaningful default
+            embed.description = desc
+        except Exception as e:
+            logger.warning(f"Failed to set embed description: {e}")
+            embed.description = "No description available"  # Fallback on error
+        
+        # Author
+        if author := raw.get("author"):
+            try:
+                name = placeholder.replace(author.get("name", ""), rv) or " "
+                url = placeholder.replace(author.get("url", ""), rv) or discord.Embed.Empty
+                icon_url = placeholder.replace(author.get("icon_url", ""), rv) or discord.Embed.Empty
+                embed.set_author(name=name, url=url, icon_url=icon_url)
+            except Exception as e:
+                logger.warning(f"Failed to set embed author: {e}")
 
+        # Title
+        if title := raw.get("title"):
+            try:
+                embed.title = placeholder.replace(title.get("name", ""), rv) or " "
+                embed.url = placeholder.replace(title.get("url", ""), rv) or discord.Embed.Empty
+            except Exception as e:
+                logger.warning(f"Failed to set embed title: {e}")
+
+        # Fields
         if fields := raw.get("fields", []):
             for f in fields:
-                embed.add_field(name=placeholder.replace(f.get("name"), rv), value=placeholder.replace(f.get("value", ""), rv), inline=f.get("inline", False))
+                try:
+                    name = placeholder.replace(f.get("name", ""), rv) or " "
+                    value = placeholder.replace(f.get("value", ""), rv) or " "
+                    inline = f.get("inline", False)
+                    embed.add_field(name=name, value=value, inline=inline)
+                except Exception as e:
+                    logger.warning(f"Failed to add embed field: {e}")
 
+        # Footer
         if footer := raw.get("footer"):
-            embed.set_footer(
-                text = placeholder.replace(footer.get("text"), rv),
-                icon_url = placeholder.replace(footer.get("icon_url"), rv)
-            ) 
+            try:
+                text = placeholder.replace(footer.get("text", ""), rv) or " "
+                icon_url = placeholder.replace(footer.get("icon_url", ""), rv) or discord.Embed.Empty
+                embed.set_footer(text=text, icon_url=icon_url)
+            except Exception as e:
+                logger.warning(f"Failed to set embed footer: {e}")
 
+        # Thumbnail
         if thumbnail := raw.get("thumbnail"):
-            embed.set_thumbnail(url = placeholder.replace(thumbnail, rv))
-        
+            try:
+                url = placeholder.replace(thumbnail, rv) or discord.Embed.Empty
+                embed.set_thumbnail(url=url)
+            except Exception as e:
+                logger.warning(f"Failed to set embed thumbnail: {e}")
+
+        # Image
         if image := raw.get("image"):
-            embed.set_image(url = placeholder.replace(image, rv))
+            try:
+                url = placeholder.replace(image, rv) or discord.Embed.Empty
+                embed.set_image(url=url)
+            except Exception as e:
+                logger.warning(f"Failed to set embed image: {e}")
 
-        embed.description = placeholder.replace(raw.get("description"), rv)
-        embed.color = int(placeholder.replace(raw.get("color"), rv))
+        # Color
+        try:
+            color_val = placeholder.replace(raw.get("color", "0xb3b3b3"), rv)
+            if isinstance(color_val, str) and color_val.startswith("0x"):
+                embed.color = int(color_val, 16)
+            else:
+                embed.color = int(color_val) if color_val else 0xb3b3b3
+        except Exception as e:
+            logger.warning(f"Failed to set embed color: {e}")
+            embed.color = 0xb3b3b3
 
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to build embed: {e}", exc_info=e)
+        # Ensure we have a valid description even if everything else fails
+        if not embed.description or not isinstance(embed.description, str) or embed.description.isspace():
+            embed.description = "An error occurred while building the embed"
+        if not embed.color:
+            embed.color = 0xb3b3b3
 
+    # Final validation before returning
+    if not embed.description or not isinstance(embed.description, str) or embed.description.isspace():
+        embed.description = "No description available"
+    
     return embed

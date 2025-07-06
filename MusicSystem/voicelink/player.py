@@ -76,7 +76,8 @@ async def connect_channel(ctx: Union[commands.Context, Interaction], channel: Vo
     if player.volume != 100:
         await player.set_volume(player.volume)
 
-    if ctx.bot.ipc.is_connected:
+    # Only try to send WS if IPC is enabled and connected
+    if hasattr(ctx.bot, 'ipc') and ctx.bot.ipc and ctx.bot.ipc.is_connected:
         await player.send_ws({"op": "createPlayer", "memberIds": [str(member.id) for member in channel.members]})
 
     return player
@@ -104,7 +105,7 @@ class Player(VoiceProtocol):
     ):
         self.client: Client = client
         self._bot: Client = client
-        self._ipc = self._bot.ipc
+        self._ipc = getattr(self._bot, 'ipc', None)  # Safely get IPC client
         self._ipc_connection = False
         
         self.context = ctx
@@ -115,7 +116,18 @@ class Player(VoiceProtocol):
         self.settings: dict = settings
         self.joinTime: float = round(time.time())
         self._volume: int = self.settings.get('volume', 100)
-        self.queue: Queue = eval(self.settings.get("queueType", "Queue"))(self.settings.get("maxQueue", func.settings.max_queue), self.settings.get("duplicateTrack", True), self.get_msg)
+        # Use a mapping instead of eval for queueType
+        queue_type_map = {
+            "Queue": Queue,
+            # Add other queue types here if needed
+        }
+        queue_type_str = self.settings.get("queueType", "Queue")
+        queue_class = queue_type_map.get(queue_type_str, Queue)
+        self.queue: Queue = queue_class(
+            self.settings.get("maxQueue", func.settings.max_queue),
+            self.settings.get("duplicateTrack", True),
+            self.get_msg
+        )
 
         self._node = NodePool.get_node()
         self._current: Optional[Track] = None
@@ -248,8 +260,8 @@ class Player(VoiceProtocol):
     
     @property
     def is_ipc_connected(self) -> bool:
-        """Indicates whether the Inter-Process Communication (IPC) connection is active."""
-        return self._ipc._is_connected and self._ipc_connection
+        """Property which returns whether or not the IPC client is connected"""
+        return hasattr(self._bot, 'ipc') and self._bot.ipc and self._bot.ipc.is_connected and self._ipc_connection
         
     def get_msg(self, *keys) -> Union[list[str], str]:
         """Retrieves a localized message or list of messages based on the given keys
@@ -304,6 +316,15 @@ class Player(VoiceProtocol):
         controller = self.settings.get("default_controller", func.settings.controller).get("embeds", {})
         raw = controller.get("active" if current_track else "inactive", {})
         
+        # Create a custom description if we have a current track
+        if current_track:
+            raw["description"] = f"[{current_track.title}]({current_track.uri})\n\nPuddles Music System"
+            # Add thumbnail for the track
+            if current_track.thumbnail:
+                raw["image"] = current_track.thumbnail
+        else:
+            raw["description"] = "No track currently playing\n\nPuddles Music System"
+        
         return build_embed(raw, self._ph)
 
     async def send(self, method: RequestMethod, query: str = None, data: Union[Dict, str] = {}) -> Dict:
@@ -312,21 +333,17 @@ class Player(VoiceProtocol):
         return await self._node.send(method, query=uri, data=data)
         
     async def _update_state(self, data: dict) -> None:
-        """Updates the player's state based on the provided data."""
-        state: dict = data.get("state")
-        self._last_update = time.time() * 1000
-        self._is_connected = state.get("connected")
-        self._last_position = state.get("position")
-        self._ping = state.get("ping")
-        self._logger.debug(f"Player in {self.guild.name}({self.guild.id}) update state with data {data}")
+        """Update the player's state with the given data."""
+        try:
+            self._last_update = int(time.time() * 1000)
+            self._last_position = data.get('position', 0)
+            self._is_connected = True
+            self._ping = data.get('ping', 0)
 
-        if self.is_ipc_connected:
-            await self.send_ws({
-                "op": "playerUpdate",
-                "lastUpdate": self._last_update,
-                "isConnected": self._is_connected,
-                "lastPosition": self._last_position
-            })
+            if self.is_ipc_connected:  # Only update IPC if it's enabled and connected
+                await self.update_voice_status()
+        except Exception as e:
+            self._logger.error(f"Error updating player state: {e}")
 
     async def _dispatch_voice_update(self, voice_data: Dict[str, Any] = None):
         """Dispatches a voice update to the node."""
@@ -374,7 +391,7 @@ class Player(VoiceProtocol):
         if isinstance(event, TrackEndEvent) and event.reason != "replaced":
             self._current = None
         
-        if isinstance(event, TrackExceptionEvent) and event.exception["message"] == "This content isn’t available.":
+        if isinstance(event, TrackExceptionEvent) and event.exception["message"] == "This content isn't available.":
             if self._node.yt_ratelimit:
                 await self._node.yt_ratelimit.flag_active_token()
 
@@ -448,6 +465,17 @@ class Player(VoiceProtocol):
 
         try:            
             embed, view = self.build_embed(self.current), InteractiveController(self)
+            
+            # Ensure we have a valid description
+            if not getattr(embed, 'description', None) or not isinstance(embed.description, str) or embed.description.isspace():
+                embed.description = "No description available"
+            
+            # Log embed details for diagnostics
+            try:
+                self._logger.debug(f"Sending embed: title='{getattr(embed, 'title', None)}', description='{getattr(embed, 'description', None)}'")
+            except Exception as e:
+                self._logger.error(f"Failed to log embed details: {e}")
+
             if not self.controller:
                 if request_channel_data := self.settings.get("music_request_channel"):
                     channel = self.bot.get_channel(request_channel_data.get("text_channel_id"))
@@ -881,8 +909,10 @@ class Player(VoiceProtocol):
             )
 
     async def send_ws(self, payload, requester: Member = None):
-        """Sends a WebSocket payload to the bot's IPC (Inter-Process Communication) system."""
-        payload['guildId'] = str(self.guild.id)
-        if requester:
-            payload['requesterId'] = str(requester.id)
-        await self.bot.ipc.send(payload)
+        """Send a WebSocket message if IPC is enabled and connected"""
+        try:
+            if self.is_ipc_connected:
+                await self._ipc.send(payload)
+        except Exception as e:
+            self._logger.error(f"Error sending WS message: {e}")
+            # Don't raise the error since IPC is optional
