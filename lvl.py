@@ -876,6 +876,283 @@ def setup_level_commands(tree: app_commands.CommandTree):
             session.close()
     
     @tree.command(
+        name="top",
+        description="Display server leaderboard by XP type"
+    )
+    @app_commands.describe(
+        type="Type of XP to show leaderboard for",
+        page="Page number to view (default: 1)"
+    )
+    @app_commands.choices(type=[
+        app_commands.Choice(name="Text XP", value="text"),
+        app_commands.Choice(name="Voice XP", value="voice"),
+        app_commands.Choice(name="Total XP", value="total")
+    ])
+    @log_command
+    async def top(interaction: discord.Interaction, type: str = "total", page: int = 1):
+        await interaction.response.defer()
+        
+        if page < 1:
+            await interaction.followup.send("❌ Page number must be 1 or higher!", ephemeral=True)
+            return
+            
+        session = get_session(str(interaction.guild_id))
+        try:
+            # Get all users with XP
+            users = session.query(UserLevel).filter_by(guild_id=str(interaction.guild_id)).all()
+            
+            if not users:
+                await interaction.followup.send("No users have earned XP yet!", ephemeral=True)
+                return
+                
+            # Sort users based on XP type
+            if type == "text":
+                sorted_users = sorted(users, key=lambda u: u.text_xp or 0, reverse=True)
+                xp_type_name = "Text"
+                get_xp = lambda u: u.text_xp
+                get_level = lambda u: u.text_level
+            elif type == "voice":
+                sorted_users = sorted(users, key=lambda u: u.voice_xp or 0, reverse=True)
+                xp_type_name = "Voice"
+                get_xp = lambda u: u.voice_xp
+                get_level = lambda u: u.voice_level
+            else:  # total
+                sorted_users = sorted(users, key=lambda u: (u.text_xp or 0) + (u.voice_xp or 0), reverse=True)
+                xp_type_name = "Total"
+                get_xp = lambda u: (u.text_xp or 0) + (u.voice_xp or 0)
+                get_level = lambda u: max(u.text_level or 0, u.voice_level or 0)
+            
+            # Paginate results (10 per page)
+            total_pages = (len(sorted_users) + 9) // 10
+            page = min(page, total_pages)
+            start_idx = (page - 1) * 10
+            page_users = sorted_users[start_idx:start_idx + 10]
+            
+            # Create leaderboard embed
+            embed = discord.Embed(
+                title=f"🏆 {interaction.guild.name} Leaderboard",
+                description=f"Top users by {xp_type_name} XP",
+                color=discord.Color.gold()
+            )
+            
+            # Add user entries
+            for idx, user_level in enumerate(page_users, start=start_idx + 1):
+                try:
+                    member = interaction.guild.get_member(int(user_level.user_id))
+                    name = member.display_name if member else f"User {user_level.user_id}"
+                    xp = get_xp(user_level)
+                    level = get_level(user_level)
+                    
+                    medal = "👑" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"`#{idx}`"
+                    embed.add_field(
+                        name=f"{medal} {name}",
+                        value=f"Level {level} • {xp:,} XP",
+                        inline=False
+                    )
+                except Exception as e:
+                    print(f"Error adding user to leaderboard: {e}")
+                    continue
+            
+            embed.set_footer(text=f"Page {page}/{total_pages} • {len(sorted_users)} total users")
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            print(f"Error in top command: {e}")
+            print(traceback.format_exc())
+            await interaction.followup.send(
+                "❌ An error occurred while generating the leaderboard.",
+                ephemeral=True
+            )
+        finally:
+            session.close()
+
+    @tree.command(
+        name="setlevel",
+        description="Set a user's level directly (Admin only)"
+    )
+    @app_commands.describe(
+        user="User to set level for",
+        type="Type of level to set",
+        level="Level to set (0-100)"
+    )
+    @app_commands.choices(type=[
+        app_commands.Choice(name="Text Level", value="text"),
+        app_commands.Choice(name="Voice Level", value="voice"),
+    ])
+    @app_commands.default_permissions(administrator=True)
+    @log_command
+    async def setlevel(interaction: discord.Interaction, user: discord.Member, type: str, level: int):
+        await interaction.response.defer()
+        
+        if level < 0 or level > 100:
+            await interaction.followup.send("❌ Level must be between 0 and 100!", ephemeral=True)
+            return
+            
+        # Calculate XP needed for this level
+        xp_needed = calculate_xp_for_level(level)
+        
+        # Use setxp command logic to set the XP
+        session = get_session(str(interaction.guild_id))
+        try:
+            user_level = session.query(UserLevel).filter_by(
+                user_id=str(user.id),
+                guild_id=str(interaction.guild_id)
+            ).first()
+            
+            if not user_level:
+                user_level = UserLevel(
+                    user_id=str(user.id),
+                    guild_id=str(interaction.guild_id),
+                    text_xp=0,
+                    voice_xp=0,
+                    text_level=0,
+                    voice_level=0,
+                    total_messages=0,
+                    total_voice_time=0
+                )
+                session.add(user_level)
+            
+            # Store old values
+            if type == "text":
+                old_level = int(user_level.text_level) if user_level.text_level is not None else 0
+                old_xp = int(user_level.text_xp) if user_level.text_xp is not None else 0
+                user_level.text_level = level
+                user_level.text_xp = xp_needed
+                xp_type_name = "Text"
+            else:  # voice
+                old_level = int(user_level.voice_level) if user_level.voice_level is not None else 0
+                old_xp = int(user_level.voice_xp) if user_level.voice_xp is not None else 0
+                user_level.voice_level = level
+                user_level.voice_xp = xp_needed
+                xp_type_name = "Voice"
+            
+            session.commit()
+            
+            embed = discord.Embed(
+                title="✏️ Level Modified",
+                description=f"Set {user.mention}'s {xp_type_name} Level to **{level}**",
+                color=discord.Color.blue()
+            )
+            
+            embed.add_field(
+                name="Changes",
+                value=f"**Level:** {old_level} → {level}\n"
+                      f"**XP:** {old_xp:,} → {xp_needed:,}",
+                inline=False
+            )
+            
+            # Handle level up rewards if level increased
+            if level > old_level:
+                try:
+                    if not hasattr(_client, 'last_active_channel'):
+                        _client.last_active_channel = {}
+                    _client.last_active_channel[interaction.guild_id] = interaction.channel
+                    
+                    asyncio.create_task(voice_tracker._handle_level_up(
+                        interaction.guild_id, user.id, old_level, level, type
+                    ))
+                except Exception as e:
+                    print(f"Error in level up handling: {e}")
+            
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            print(f"Error in setlevel command: {e}")
+            print(traceback.format_exc())
+            await interaction.followup.send(
+                f"❌ An error occurred while setting the level: {str(e)}",
+                ephemeral=True
+            )
+        finally:
+            session.close()
+
+    @tree.command(
+        name="lvlreset",
+        description="Reset a user's levels and XP data (Admin only)"
+    )
+    @app_commands.describe(
+        user="User to reset data for",
+        type="Type of data to reset"
+    )
+    @app_commands.choices(type=[
+        app_commands.Choice(name="Text XP Only", value="text"),
+        app_commands.Choice(name="Voice XP Only", value="voice"),
+        app_commands.Choice(name="All XP Data", value="all"),
+    ])
+    @app_commands.default_permissions(administrator=True)
+    @log_command
+    async def lvlreset(interaction: discord.Interaction, user: discord.Member, type: str):
+        await interaction.response.defer()
+        
+        session = get_session(str(interaction.guild_id))
+        try:
+            user_level = session.query(UserLevel).filter_by(
+                user_id=str(user.id),
+                guild_id=str(interaction.guild_id)
+            ).first()
+            
+            if not user_level:
+                await interaction.followup.send(
+                    f"{user.mention} has no XP data to reset!",
+                    ephemeral=True
+                )
+                return
+            
+            # Store old values for confirmation message
+            old_text_level = int(user_level.text_level) if user_level.text_level is not None else 0
+            old_text_xp = int(user_level.text_xp) if user_level.text_xp is not None else 0
+            old_voice_level = int(user_level.voice_level) if user_level.voice_level is not None else 0
+            old_voice_xp = int(user_level.voice_xp) if user_level.voice_xp is not None else 0
+            
+            # Reset based on type
+            if type == "text" or type == "all":
+                user_level.text_xp = 0
+                user_level.text_level = 0
+                user_level.total_messages = 0
+            
+            if type == "voice" or type == "all":
+                user_level.voice_xp = 0
+                user_level.voice_level = 0
+                user_level.total_voice_time = 0
+            
+            session.commit()
+            
+            # Create confirmation embed
+            embed = discord.Embed(
+                title="🗑️ XP Data Reset",
+                description=f"Reset {user.mention}'s XP data",
+                color=discord.Color.red()
+            )
+            
+            if type == "text" or type == "all":
+                embed.add_field(
+                    name="📝 Text Data Reset",
+                    value=f"Level {old_text_level} → 0\n"
+                          f"XP {old_text_xp:,} → 0",
+                    inline=True
+                )
+            
+            if type == "voice" or type == "all":
+                embed.add_field(
+                    name="🎙️ Voice Data Reset",
+                    value=f"Level {old_voice_level} → 0\n"
+                          f"XP {old_voice_xp:,} → 0",
+                    inline=True
+                )
+            
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            print(f"Error in lvlreset command: {e}")
+            print(traceback.format_exc())
+            await interaction.followup.send(
+                f"❌ An error occurred while resetting XP data: {str(e)}",
+                ephemeral=True
+            )
+        finally:
+            session.close()
+
+    @tree.command(
         name="lvlconfig",
         description="Configure server leveling settings (Admin only)"
     )
@@ -885,13 +1162,21 @@ def setup_level_commands(tree: app_commands.CommandTree):
     )
     @app_commands.choices(setting=[
         app_commands.Choice(name="View All Settings", value="view"),
+        app_commands.Choice(name="Text XP Enabled", value="text_xp_enabled"),
         app_commands.Choice(name="Voice XP Enabled", value="voice_xp_enabled"),
+        app_commands.Choice(name="Text XP Min", value="text_xp_min"),
+        app_commands.Choice(name="Text XP Max", value="text_xp_max"),
         app_commands.Choice(name="Voice XP Rate", value="voice_xp_rate"),
+        app_commands.Choice(name="Text Cooldown", value="text_cooldown"),
         app_commands.Choice(name="XP Multiplier", value="multiplier"),
+        app_commands.Choice(name="Level Up Messages", value="level_up_messages"),
+        app_commands.Choice(name="Level Up Channel", value="level_up_channel"),
     ])
     @app_commands.default_permissions(administrator=True)
     @log_command
     async def lvlconfig(interaction: discord.Interaction, setting: str, value: Optional[str] = None):
+        await interaction.response.defer()
+        
         session = get_session(str(interaction.guild_id))
         try:
             # Get or create settings
@@ -910,34 +1195,62 @@ def setup_level_commands(tree: app_commands.CommandTree):
                 )
                 
                 embed.add_field(
+                    name="📝 Text XP Settings",
+                    value=f"**Enabled:** {'✅' if settings.text_xp_enabled else '❌'}\n"
+                          f"**XP per message:** {settings.text_xp_min}-{settings.text_xp_max}\n"
+                          f"**Cooldown:** {settings.text_cooldown}s",
+                    inline=True
+                )
+                
+                embed.add_field(
                     name="🎙️ Voice XP Settings",
-                    value=f"**Voice XP enabled:** {'✅' if settings.voice_xp_enabled else '❌'}\n"
+                    value=f"**Enabled:** {'✅' if settings.voice_xp_enabled else '❌'}\n"
                           f"**XP per minute:** {settings.voice_xp_rate}",
                     inline=True
                 )
                 
                 embed.add_field(
                     name="⚡ General Settings",
-                    value=f"**XP Multiplier:** {settings.multiplier}x",
-                    inline=True
+                    value=f"**XP Multiplier:** {settings.multiplier}x\n"
+                          f"**Level Up Messages:** {'✅' if settings.level_up_messages else '❌'}\n"
+                          f"**Level Up Channel:** {f'<#{settings.level_up_channel}>' if settings.level_up_channel else 'Same as command'}",
+                    inline=False
                 )
                 
-                await interaction.response.send_message(embed=embed)
+                if settings.no_xp_roles:
+                    no_xp_roles = [f"<@&{role_id}>" for role_id in settings.no_xp_roles.split(",") if role_id]
+                    embed.add_field(
+                        name="🚫 No XP Roles",
+                        value="\n".join(no_xp_roles) or "None",
+                        inline=False
+                    )
+                
+                if settings.no_xp_channels:
+                    no_xp_channels = [f"<#{channel_id}>" for channel_id in settings.no_xp_channels.split(",") if channel_id]
+                    embed.add_field(
+                        name="🚫 No XP Channels",
+                        value="\n".join(no_xp_channels) or "None",
+                        inline=False
+                    )
+                
+                await interaction.followup.send(embed=embed)
                 return
             
             # Update setting
             try:
-                if setting == "voice_xp_enabled":
+                if setting in ("text_xp_enabled", "voice_xp_enabled", "level_up_messages"):
                     new_val = value.lower() in ('true', '1', 'yes', 'on', 'enable', 'enabled')
-                    settings.voice_xp_enabled = new_val
-                    desc = f"Voice XP {'enabled' if new_val else 'disabled'}"
+                    setattr(settings, setting, new_val)
+                    desc = f"{setting.replace('_', ' ').title()} {'enabled' if new_val else 'disabled'}"
                     
-                elif setting == "voice_xp_rate":
+                elif setting in ("text_xp_min", "text_xp_max", "voice_xp_rate", "text_cooldown"):
                     new_val = int(value)
-                    if new_val < 1 or new_val > 50:
-                        raise ValueError("Must be between 1 and 50")
-                    settings.voice_xp_rate = new_val
-                    desc = f"Voice XP rate set to {new_val} per minute"
+                    if new_val < 0:
+                        raise ValueError("Value cannot be negative")
+                    if setting == "text_cooldown" and new_val < 1:
+                        raise ValueError("Cooldown must be at least 1 second")
+                    setattr(settings, setting, new_val)
+                    desc = f"{setting.replace('_', ' ').title()} set to {new_val}"
                     
                 elif setting == "multiplier":
                     new_val = float(value)
@@ -946,8 +1259,21 @@ def setup_level_commands(tree: app_commands.CommandTree):
                     settings.multiplier = new_val
                     desc = f"XP multiplier set to {new_val}x"
                     
+                elif setting == "level_up_channel":
+                    if value.lower() in ('none', 'disable', 'disabled', 'remove', 'reset'):
+                        settings.level_up_channel = None
+                        desc = "Level up messages will be sent in the same channel as commands"
+                    else:
+                        # Try to get channel ID from mention or ID
+                        channel_id = value.strip('<#>')
+                        channel = interaction.guild.get_channel(int(channel_id))
+                        if not channel:
+                            raise ValueError("Invalid channel")
+                        settings.level_up_channel = str(channel.id)
+                        desc = f"Level up messages will be sent in {channel.mention}"
+                
                 else:
-                    await interaction.response.send_message("Invalid setting!", ephemeral=True)
+                    await interaction.followup.send("Invalid setting!", ephemeral=True)
                     return
                     
                 session.commit()
@@ -958,22 +1284,157 @@ def setup_level_commands(tree: app_commands.CommandTree):
                     color=discord.Color.green()
                 )
                 
-                await interaction.response.send_message(embed=embed)
+                await interaction.followup.send(embed=embed)
                 
             except ValueError as e:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"❌ Invalid value: {str(e)}",
                     ephemeral=True
                 )
                 
         except Exception as e:
             print(f"Error in lvlconfig: {e}")
-            await interaction.response.send_message(
-                "An error occurred while updating settings.",
+            print(traceback.format_exc())
+            await interaction.followup.send(
+                "❌ An error occurred while updating settings.",
                 ephemeral=True
             )
         finally:
             session.close()
+
+    @tree.command(
+        name="setxp",
+        description="Set a user's XP directly (Admin only)"
+    )
+    @app_commands.describe(
+        user="User to set XP for",
+        type="Type of XP to set",
+        amount="Amount of XP to set"
+    )
+    @app_commands.choices(type=[
+        app_commands.Choice(name="Text XP", value="text"),
+        app_commands.Choice(name="Voice XP", value="voice"),
+    ])
+    @app_commands.default_permissions(administrator=True)
+    @log_command
+    async def setxp(interaction: discord.Interaction, user: discord.Member, type: str, amount: int):
+        try:
+            # Defer the response immediately to prevent timeout
+            await interaction.response.defer(ephemeral=False)
+            
+            if amount < 0:
+                await interaction.followup.send("❌ XP amount cannot be negative!", ephemeral=True)
+                return
+
+            session = get_session(str(interaction.guild_id))
+            try:
+                # Get or create user level in a single query
+                user_level = session.query(UserLevel).filter_by(
+                    user_id=str(user.id),
+                    guild_id=str(interaction.guild_id)
+                ).first()
+                
+                if not user_level:
+                    user_level = UserLevel(
+                        user_id=str(user.id),
+                        guild_id=str(interaction.guild_id),
+                        text_xp=0,
+                        voice_xp=0,
+                        text_level=0,
+                        voice_level=0,
+                        total_messages=0,
+                        total_voice_time=0
+                    )
+                    session.add(user_level)
+                
+                # Store old values and update new values
+                if type == "text":
+                    old_xp = int(user_level.text_xp) if user_level.text_xp is not None else 0
+                    old_level = int(user_level.text_level) if user_level.text_level is not None else 0
+                    user_level.text_xp = amount
+                    user_level.text_level = calculate_level(amount)
+                    xp_type_name = "Text"
+                else:  # voice
+                    old_xp = int(user_level.voice_xp) if user_level.voice_xp is not None else 0
+                    old_level = int(user_level.voice_level) if user_level.voice_level is not None else 0
+                    user_level.voice_xp = amount
+                    user_level.voice_level = calculate_level(amount)
+                    xp_type_name = "Voice"
+                
+                # Commit changes
+                try:
+                    session.commit()
+                except Exception as e:
+                    print(f"Database error in setxp: {e}")
+                    session.rollback()
+                    await interaction.followup.send("❌ Database error occurred while saving changes.", ephemeral=True)
+                    return
+                
+                # Calculate new level after successful commit
+                new_level = calculate_level(amount)
+                
+                # Create response embed
+                embed = discord.Embed(
+                    title="✏️ XP Modified",
+                    description=f"Set {user.mention}'s {xp_type_name} XP to **{amount:,}**",
+                    color=discord.Color.blue()
+                )
+                
+                embed.add_field(
+                    name="Changes",
+                    value=f"**XP:** {old_xp:,} → {amount:,}\n"
+                          f"**Level:** {old_level} → {new_level}",
+                    inline=False
+                )
+                
+                # Handle level up if applicable
+                if new_level != old_level:
+                    embed.add_field(
+                        name="📊 Level Change",
+                        value=f"{'📈' if new_level > old_level else '📉'} Level {old_level} → Level {new_level}",
+                        inline=False
+                    )
+                    
+                    # Only trigger level up handling if level increased
+                    if new_level > old_level:
+                        try:
+                            if not hasattr(_client, 'last_active_channel'):
+                                _client.last_active_channel = {}
+                            _client.last_active_channel[interaction.guild_id] = interaction.channel
+                            
+                            # Handle level up in background task to not delay response
+                            asyncio.create_task(voice_tracker._handle_level_up(
+                                interaction.guild_id, user.id, old_level, new_level, type
+                            ))
+                        except Exception as e:
+                            print(f"Error in level up handling: {e}")
+                            # Don't fail the command if level up handling fails
+                
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                print(f"Error in setxp command: {e}")
+                print(traceback.format_exc())
+                await interaction.followup.send(
+                    f"❌ An error occurred while processing the command: {str(e)}",
+                    ephemeral=True
+                )
+            finally:
+                session.close()
+                
+        except Exception as e:
+            print(f"Critical error in setxp command: {e}")
+            print(traceback.format_exc())
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ A critical error occurred while processing the command.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    "❌ A critical error occurred while processing the command.",
+                    ephemeral=True
+                )
 
 # Export the setup functions
 __all__ = ['setup_leveling_system', 'setup_level_commands', 'handle_message_xp', 'handle_voice_state_update'] 
