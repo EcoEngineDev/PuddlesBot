@@ -16,6 +16,7 @@ def setup_inviter_system(client):
     """Initialize the invite tracking system with client reference"""
     global _client
     _client = client
+    print("✅ Inviter system initialized with client reference")
 
 def log_command(func: Callable) -> Callable:
     @functools.wraps(func)
@@ -89,7 +90,12 @@ class InviteAdmin(Base):
 
 # Create tables
 def init_invite_db(server_id):
-    Base.metadata.create_all(bind=get_engine(server_id))
+    """Initialize invite database tables"""
+    try:
+        Base.metadata.create_all(bind=get_engine(server_id))
+        print(f"✅ Invite database initialized for server {server_id}")
+    except Exception as e:
+        print(f"❌ Error initializing invite database: {e}")
 
 # Invite tracking cache to store current invites
 guild_invites_cache = {}
@@ -140,6 +146,7 @@ async def sync_invite_database(guild):
         print(f"❌ No permission to sync invites for {guild.name}")
     except Exception as e:
         print(f"❌ Error syncing invites for {guild.name}: {e}")
+        session.rollback()
     finally:
         session.close()
 
@@ -191,7 +198,9 @@ async def handle_member_join(member):
                     guild_id=str(guild.id),
                     inviter_id=str(used_invite.inviter.id),
                     total_invites=1,
-                    net_invites=1
+                    total_leaves=0,
+                    net_invites=1,
+                    last_updated=datetime.utcnow()
                 )
                 session.add(stats)
             else:
@@ -218,14 +227,21 @@ async def handle_member_join(member):
     except Exception as e:
         print(f"❌ Error handling member join for {member.display_name}: {e}")
         print(traceback.format_exc())
+        session.rollback()
     finally:
         session.close()
 
 async def can_manage_invites(interaction: discord.Interaction) -> bool:
     """Check if user can manage invite system"""
     # Server administrators can always manage invites
-    if interaction.user.guild_permissions.administrator:
+    if hasattr(interaction.user, 'guild_permissions') and interaction.user.guild_permissions.administrator:
         return True
+    
+    # For members, check guild permissions
+    if interaction.guild:
+        member = interaction.guild.get_member(interaction.user.id)
+        if member and member.guild_permissions.administrator:
+            return True
     
     # Check if user is in invite admin whitelist
     init_invite_db(str(interaction.guild_id))
@@ -275,8 +291,11 @@ async def handle_member_leave(member):
             session.commit()
             
             try:
-                inviter = await _client.fetch_user(int(join_record.inviter_id))
-                inviter_name = inviter.display_name if inviter else "Unknown"
+                if _client:
+                    inviter = await _client.fetch_user(int(join_record.inviter_id))
+                    inviter_name = inviter.display_name if inviter else "Unknown"
+                else:
+                    inviter_name = "Unknown"
             except:
                 inviter_name = "Unknown"
             
@@ -290,6 +309,7 @@ async def handle_member_leave(member):
     except Exception as e:
         print(f"❌ Error handling member leave for {member.display_name}: {e}")
         print(traceback.format_exc())
+        session.rollback()
     finally:
         session.close()
 
@@ -320,7 +340,8 @@ class ResetInvitesConfirmView(discord.ui.View):
         
         # Disable all buttons
         for item in self.children:
-            item.disabled = True
+            if hasattr(item, 'disabled'):
+                item.disabled = True
         
         await interaction.response.edit_message(content="🔄 Resetting all invite data...", view=self)
         
@@ -366,6 +387,7 @@ class ResetInvitesConfirmView(discord.ui.View):
                 content=f"❌ Error occurred while resetting data: {str(e)}",
                 view=None
             )
+            session.rollback()
         finally:
             session.close()
     
@@ -434,11 +456,16 @@ class EditInvitesModal(discord.ui.Modal):
             session = get_session(str(interaction.guild_id))
             try:
                 if self.current_stats:
-                    # Update existing stats
-                    self.current_stats.total_invites = total_invites
-                    self.current_stats.total_leaves = total_leaves
-                    self.current_stats.net_invites = total_invites - total_leaves
-                    self.current_stats.last_updated = datetime.utcnow()
+                    # Update existing stats - query fresh from database
+                    stats = session.query(InviteStats).filter_by(
+                        id=self.current_stats.id
+                    ).first()
+                    
+                    if stats:
+                        stats.total_invites = total_invites
+                        stats.total_leaves = total_leaves
+                        stats.net_invites = total_invites - total_leaves
+                        stats.last_updated = datetime.utcnow()
                 else:
                     # Create new stats
                     new_stats = InviteStats(
@@ -464,15 +491,18 @@ class EditInvitesModal(discord.ui.Modal):
                 
             except Exception as e:
                 print(f"Error updating invite stats: {e}")
+                print(traceback.format_exc())
                 await interaction.response.send_message(
                     "❌ An error occurred while updating the statistics.",
                     ephemeral=True
                 )
+                session.rollback()
             finally:
                 session.close()
                 
         except Exception as e:
             print(f"Error in EditInvitesModal: {e}")
+            print(traceback.format_exc())
             await interaction.response.send_message(
                 "❌ An unexpected error occurred.",
                 ephemeral=True
@@ -548,6 +578,7 @@ async def editinvites(interaction: discord.Interaction, user: discord.Member):
         
     except Exception as e:
         print(f"Error in editinvites command: {e}")
+        print(traceback.format_exc())
         await interaction.response.send_message(
             "❌ An error occurred while loading user statistics.",
             ephemeral=True
@@ -623,10 +654,12 @@ async def invw(interaction: discord.Interaction, user: discord.Member, action: s
             
     except Exception as e:
         print(f"Error in invw command: {str(e)}")
+        print(traceback.format_exc())
         await interaction.response.send_message(
             f"An error occurred while updating the whitelist: {str(e)}",
             ephemeral=True
         )
+        session.rollback()
     finally:
         session.close()
 
@@ -648,21 +681,29 @@ async def topinvite(interaction: discord.Interaction):
         if not top_inviters:
             await interaction.response.send_message(
                 "📊 No invite data found for this server yet!\n"
-                "Invite tracking starts when the bot is online and users join through invites.",
+                "Invite tracking starts when the bot is online and users join through invites.\n\n"
+                "To get started:\n"
+                "• Use `/invitesync` to sync existing invites\n"
+                "• Use `/editinvites @user` to manually set invite counts\n"
+                "• Create new invites and have people join through them",
                 ephemeral=True
             )
             return
         
         embed = discord.Embed(
             title="🏆 Top Inviters",
-            description=f"Top invite statistics for **{interaction.guild.name}**",
+            description=f"Top invite statistics for **{interaction.guild.name}**" if interaction.guild else "this server",
             color=discord.Color.gold()
         )
         
         for i, stats in enumerate(top_inviters, 1):
             try:
-                user = await _client.fetch_user(int(stats.inviter_id))
-                username = user.display_name if user else f"Unknown User (ID: {stats.inviter_id})"
+                if _client:
+                    user = await _client.fetch_user(int(stats.inviter_id))
+                    username = user.display_name if user else f"Unknown User (ID: {stats.inviter_id})"
+                else:
+                    member = interaction.guild.get_member(int(stats.inviter_id))
+                    username = member.display_name if member else f"Unknown User (ID: {stats.inviter_id})"
             except:
                 username = f"Unknown User (ID: {stats.inviter_id})"
             
@@ -703,6 +744,7 @@ async def topinvite(interaction: discord.Interaction):
         
     except Exception as e:
         print(f"Error in topinvite command: {e}")
+        print(traceback.format_exc())
         await interaction.response.send_message(
             "❌ An error occurred while fetching invite statistics.",
             ephemeral=True
@@ -732,7 +774,8 @@ async def showinvites(interaction: discord.Interaction, user: discord.Member):
         if not stats:
             await interaction.response.send_message(
                 f"📊 No invite data found for {user.display_name}.\n"
-                f"They haven't invited anyone to this server yet, or invite tracking started after their invites.",
+                f"They haven't invited anyone to this server yet, or invite tracking started after their invites.\n\n"
+                f"Use `/editinvites @{user.display_name}` to manually set their invite count.",
                 ephemeral=True
             )
             return
@@ -780,8 +823,12 @@ async def showinvites(interaction: discord.Interaction, user: discord.Member):
             recent_list = []
             for join in joins[:5]:  # Show 5 most recent
                 try:
-                    invited_user = await _client.fetch_user(int(join.user_id))
-                    user_name = invited_user.display_name if invited_user else "Unknown"
+                    if _client:
+                        invited_user = await _client.fetch_user(int(join.user_id))
+                        user_name = invited_user.display_name if invited_user else "Unknown"
+                    else:
+                        invited_member = interaction.guild.get_member(int(join.user_id))
+                        user_name = invited_member.display_name if invited_member else "Unknown"
                 except:
                     user_name = f"User ID: {join.user_id}"
                 
@@ -798,6 +845,7 @@ async def showinvites(interaction: discord.Interaction, user: discord.Member):
         
     except Exception as e:
         print(f"Error in showinvites command: {e}")
+        print(traceback.format_exc())
         await interaction.response.send_message(
             "❌ An error occurred while fetching invite statistics.",
             ephemeral=True
@@ -817,6 +865,7 @@ async def invitesync(interaction: discord.Interaction):
     
     try:
         guild = interaction.guild
+        init_invite_db(str(guild.id))
         await sync_invite_database(guild)
         await update_invite_cache(guild)
         
@@ -828,6 +877,7 @@ async def invitesync(interaction: discord.Interaction):
         
     except Exception as e:
         print(f"Error in invitesync command: {e}")
+        print(traceback.format_exc())
         await interaction.followup.send(
             f"❌ An error occurred while syncing invite data: {str(e)}",
             ephemeral=True
@@ -845,17 +895,14 @@ async def invitereset(interaction: discord.Interaction):
     
     try:
         # Drop and recreate tables
-        # You must call this with the correct server_id when dropping tables
-        # Example: Base.metadata.drop_all(bind=get_engine(server_id), tables=[
-        Base.metadata.drop_all(bind=get_engine(interaction.guild_id), tables=[
+        Base.metadata.drop_all(bind=get_engine(str(interaction.guild_id)), tables=[
             InviteTracker.__table__,
             InviteJoin.__table__,
             InviteStats.__table__,
             InviteAdmin.__table__
         ])
-        # You must call this with the correct server_id when creating tables
-        # Example: Base.metadata.create_all(bind=get_engine(server_id), tables=[
-        Base.metadata.create_all(bind=get_engine(interaction.guild_id), tables=[
+        
+        Base.metadata.create_all(bind=get_engine(str(interaction.guild_id)), tables=[
             InviteTracker.__table__,
             InviteJoin.__table__,
             InviteStats.__table__,
@@ -876,6 +923,7 @@ async def invitereset(interaction: discord.Interaction):
         
     except Exception as e:
         print(f"Error in invitereset command: {e}")
+        print(traceback.format_exc())
         await interaction.followup.send(
             f"❌ An error occurred while resetting invite tables: {str(e)}",
             ephemeral=True
@@ -918,7 +966,7 @@ async def invitestats(interaction: discord.Interaction):
         
         embed = discord.Embed(
             title="📊 Server Invite Statistics",
-            description=f"Comprehensive invite data for **{interaction.guild.name}**",
+            description=f"Comprehensive invite data for **{interaction.guild.name}**" if interaction.guild else "this server",
             color=discord.Color.green()
         )
         
@@ -954,6 +1002,7 @@ async def invitestats(interaction: discord.Interaction):
         
     except Exception as e:
         print(f"Error in invitestats command: {e}")
+        print(traceback.format_exc())
         await interaction.response.send_message(
             "❌ An error occurred while fetching server statistics.",
             ephemeral=True
@@ -995,4 +1044,6 @@ async def on_ready():
         for guild in _client.guilds:
             await sync_invite_database(guild)
             await update_invite_cache(guild)
-        print("✅ Invite tracking system ready!") 
+        print("✅ Invite tracking system ready!")
+    else:
+        print("⚠️ Client not set up for invite tracking system") 
