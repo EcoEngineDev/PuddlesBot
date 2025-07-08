@@ -18,6 +18,94 @@ import sqlalchemy
 import json
 import pathlib
 import utils
+import logging
+import logging.handlers
+import platform
+import psutil
+import time
+import aiohttp
+from aiohttp import ClientConnectorError, ClientError
+
+# Set up logging configuration
+def setup_logging():
+    """Configure detailed logging for the bot"""
+    # Create logs directory if it doesn't exist
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+
+    # Set up the root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+
+    # Console handler with color formatting
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_format = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    console_handler.setFormatter(console_format)
+    root_logger.addHandler(console_handler)
+
+    # File handler for detailed debug logs
+    debug_handler = logging.handlers.RotatingFileHandler(
+        filename='logs/debug.log',
+        encoding='utf-8',
+        maxBytes=32 * 1024 * 1024,  # 32 MB
+        backupCount=5,
+    )
+    debug_handler.setLevel(logging.DEBUG)
+    debug_format = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s: %(message)s\nContext: %(pathname)s:%(lineno)d',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    debug_handler.setFormatter(debug_format)
+    root_logger.addHandler(debug_handler)
+
+    # Error handler for critical issues
+    error_handler = logging.handlers.RotatingFileHandler(
+        filename='logs/error.log',
+        encoding='utf-8',
+        maxBytes=32 * 1024 * 1024,  # 32 MB
+        backupCount=5,
+    )
+    error_handler.setLevel(logging.ERROR)
+    error_format = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s: %(message)s\n'
+        'Path: %(pathname)s:%(lineno)d\n'
+        'Function: %(funcName)s\n'
+        'Exception:\n%(exc_info)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    error_handler.setFormatter(error_format)
+    root_logger.addHandler(error_handler)
+
+    return root_logger
+
+# Initialize logging
+logger = setup_logging()
+
+def log_system_info():
+    """Log detailed system information"""
+    logger.info("=== System Information ===")
+    logger.info(f"OS: {platform.system()} {platform.version()}")
+    logger.info(f"Python: {sys.version}")
+    logger.info(f"Discord.py: {discord.__version__}")
+    
+    # Memory usage
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    logger.info(f"Memory Usage: {memory_info.rss / 1024 / 1024:.2f} MB")
+    
+    # CPU usage
+    cpu_percent = psutil.cpu_percent(interval=1)
+    logger.info(f"CPU Usage: {cpu_percent}%")
+    
+    # Disk space
+    disk = psutil.disk_usage('/')
+    logger.info(f"Disk Space: {disk.used / 1024 / 1024 / 1024:.1f}GB used out of {disk.total / 1024 / 1024 / 1024:.1f}GB")
+    
+    logger.info("=" * 50)
 
 def create_default_env():
     """Create default .env file if it doesn't exist"""
@@ -38,20 +126,20 @@ MONGODB_URL=
 MONGODB_NAME="""
         try:
             env_path.write_text(env_content, encoding='utf-8')
-            print("\n⚠️ A new .env file has been created.")
-            print("Please edit the .env file and add your Discord bot token and client ID.")
-            print("\nYou can get these from the Discord Developer Portal:")
-            print("1. Go to https://discord.com/developers/applications")
-            print("2. Select your bot (or create a new application)")
-            print("3. Copy the 'APPLICATION ID' - this is your CLIENT_ID")
-            print("4. Go to the 'Bot' section")
-            print("5. Click 'Reset Token' and copy the new token - this is your DISCORD_TOKEN")
-            print("\nAfter adding these values to the .env file, run this script again.")
+            logger.warning("A new .env file has been created.")
+            logger.info("Please edit the .env file and add your Discord bot token and client ID.")
+            logger.info("\nYou can get these from the Discord Developer Portal:")
+            logger.info("1. Go to https://discord.com/developers/applications")
+            logger.info("2. Select your bot (or create a new application)")
+            logger.info("3. Copy the 'APPLICATION ID' - this is your CLIENT_ID")
+            logger.info("4. Go to the 'Bot' section")
+            logger.info("5. Click 'Reset Token' and copy the new token - this is your DISCORD_TOKEN")
+            logger.info("\nAfter adding these values to the .env file, run this script again.")
             sys.exit(1)
         except Exception as e:
-            print(f"\n❌ Error creating .env file: {e}")
-            print("Please create a .env file manually with the following content:")
-            print("\n" + env_content)
+            logger.error(f"Error creating .env file: {e}", exc_info=True)
+            logger.error("Please create a .env file manually with the following content:")
+            logger.info("\n" + env_content)
             sys.exit(1)
 
 # Create .env file if it doesn't exist
@@ -153,16 +241,20 @@ except ImportError as e:
 
 class VocardTranslator(discord.app_commands.Translator):
     async def load(self):
-        music_func.logger.info("Loaded Translator")
+        if music_func and hasattr(music_func, 'logger'):
+            music_func.logger.info("Loaded Translator")
 
     async def unload(self):
-        music_func.logger.info("Unload Translator")
+        if music_func and hasattr(music_func, 'logger'):
+            music_func.logger.info("Unload Translator")
 
     async def translate(self, string: discord.app_commands.locale_str, locale: discord.Locale, context: discord.app_commands.TranslationContext):
+        if not music_func or not hasattr(music_func, 'LOCAL_LANGS'):
+            return None
         locale_key = str(locale)
         if locale_key in music_func.LOCAL_LANGS:
             translated_text = music_func.LOCAL_LANGS[locale_key].get(string.message)
-            if translated_text is None:
+            if translated_text is None and hasattr(music_func, 'MISSING_TRANSLATOR'):
                 missing_translations = music_func.MISSING_TRANSLATOR.setdefault(locale_key, [])
                 if string.message not in missing_translations:
                     missing_translations.append(string.message)
@@ -178,25 +270,63 @@ class CommandCheck(discord.app_commands.CommandTree):
 
 class PuddlesBot(commands.Bot):
     def __init__(self):
-        intents = discord.Intents.default()
-        intents.message_content = True
-        intents.members = True
+        super().__init__(
+            command_prefix=commands.when_mentioned_or(""),
+            intents=discord.Intents.all(),
+            tree_cls=CommandCheck,
+            allowed_mentions=discord.AllowedMentions(roles=False, everyone=False, users=True)
+        )
         
-        # Initialize with custom command tree
-        super().__init__(command_prefix='!', intents=intents, tree_cls=CommandCheck)
-        
-        self.scheduler = AsyncIOScheduler()
-        self.ipc = None  # Will be initialized in setup_hook if enabled
-        
-        # Initialize Vocard settings
+        # Initialize systems
         self.setup_vocard_settings()
         
+        # Activity rotation for keepalive
+        self.activities = [
+            discord.Activity(type=discord.ActivityType.listening, name="/help"),
+            discord.Activity(type=discord.ActivityType.watching, name="for commands"),
+            discord.Activity(type=discord.ActivityType.playing, name="with Discord"),
+            discord.Activity(type=discord.ActivityType.listening, name="music"),
+        ]
+        
+        # Connection monitoring
+        self.current_activity_index = 0
+        self.last_heartbeat = datetime.utcnow()
+        self.reconnect_attempts = 0
+        self.last_reconnect_time = None
+        self.connection_stable = True
+        self.scheduler = AsyncIOScheduler()
+        self.node_pool = None  # Track active node pool
+        
+        # Reconnection settings
+        self.max_reconnect_attempts = 10
+        self.base_reconnect_delay = 5
+        self.max_reconnect_delay = 300  # 5 minutes
+        
+        # Health monitoring
+        self.health_stats = {
+            'disconnects': 0,
+            'reconnects': 0,
+            'high_latency_count': 0,
+            'last_latency': 0,
+            'commands_processed': 0,
+            'errors_encountered': 0,
+            'last_error_time': None,
+            'uptime_start': time.time()
+        }
+        
+        logger.info("PuddlesBot initialized with enhanced monitoring")
+        
+        self.ipc = None  # Will be initialized in setup_hook if enabled
+        
         # Initialize Vocard components if available
-        if music_func and Settings:
-            self.setup_vocard_music()
+        # (Will be set up in setup_hook with proper async await)
     
     def setup_vocard_settings(self):
         """Set up Vocard settings with environment variables"""
+        if not music_func or not Settings:
+            print("⚠️ Music system not available, skipping Vocard settings setup")
+            return
+            
         try:
             # Load settings from file
             settings_path = os.path.join(os.path.dirname(__file__), 'MusicSystem', 'settings.json')
@@ -250,166 +380,356 @@ class PuddlesBot(commands.Bot):
             music_func.SETTINGS_DB = None
             music_func.USERS_DB = None
     
+    async def cleanup_nodes(self):
+        """Clean up existing node connections"""
+        try:
+            if voicelink and hasattr(voicelink, 'NodePool'):
+                # Get all existing nodes
+                if hasattr(voicelink.NodePool, '_nodes'):
+                    nodes = list(voicelink.NodePool._nodes.values())
+                    for node in nodes:
+                        try:
+                            await node.disconnect()
+                            logger.info(f"Disconnected node: {node.identifier}")
+                        except Exception as e:
+                            logger.warning(f"Error disconnecting node {node.identifier}: {e}")
+                
+                # Clear the node pool
+                if hasattr(voicelink.NodePool, '_nodes'):
+                    voicelink.NodePool._nodes.clear()
+                
+                logger.info("Cleaned up all existing node connections")
+        except Exception as e:
+            logger.error(f"Error cleaning up nodes: {e}", exc_info=True)
+
     async def setup_vocard_music(self):
         """Set up Vocard music system components"""
+        if not MUSIC_AVAILABLE or not music_func:
+            logger.warning("Vocard music system not available")
+            return
+            
         try:
             # Initialize IPC client with disabled state by default
             self.ipc = None
             
+            # Clean up any existing nodes
+            await self.cleanup_nodes()
+            
             # Set up language support
-            music_func.langs_setup()
+            if hasattr(music_func, 'langs_setup'):
+                music_func.langs_setup()
             
             # Set up Vocard components
-            if MUSIC_AVAILABLE:
-                # Initialize NodePool
-                await voicelink.NodePool.create_node(
-                    bot=self,
-                    host=music_func.settings.nodes["DEFAULT"]["host"],
-                    port=music_func.settings.nodes["DEFAULT"]["port"],
-                    password=music_func.settings.nodes["DEFAULT"]["password"],
-                    secure=music_func.settings.nodes["DEFAULT"]["secure"],
-                    identifier="DEFAULT"
-                )
+            if MUSIC_AVAILABLE and voicelink and hasattr(music_func, 'settings'):
+                # Generate a unique node identifier using timestamp
+                node_id = f"MAIN_{int(time.time())}"
                 
-                # Load music cogs
-                await self.load_extension("cogs.basic")
-                await self.load_extension("cogs.effect")
-                await self.load_extension("cogs.playlist")
-                await self.load_extension("cogs.settings")
-                await self.load_extension("cogs.task")
-                await self.load_extension("cogs.listeners")
-                
-                # Add Vocard translator
-                self.tree.translator = VocardTranslator()
-                
-                print("✅ Vocard music system setup complete")
-                
-            else:
-                print("⚠️ Vocard music system not available")
+                try:
+                    # Initialize NodePool with unique identifier
+                    node = await voicelink.NodePool.create_node(
+                        bot=self,
+                        host=music_func.settings.nodes["DEFAULT"]["host"],
+                        port=music_func.settings.nodes["DEFAULT"]["port"],
+                        password=music_func.settings.nodes["DEFAULT"]["password"],
+                        secure=music_func.settings.nodes["DEFAULT"]["secure"],
+                        identifier=node_id  # Use unique identifier
+                    )
+                    self.node_pool = node
+                    
+                    # Load music cogs
+                    await self.load_extension("cogs.basic")
+                    await self.load_extension("cogs.effect")
+                    await self.load_extension("cogs.playlist")
+                    await self.load_extension("cogs.settings")
+                    await self.load_extension("cogs.task")
+                    await self.load_extension("cogs.listeners")
+                    
+                    logger.info("✅ Vocard music system setup complete")
+                except Exception as e:
+                    logger.error(f"Failed to create Lavalink node: {e}", exc_info=True)
+                    raise
                 
         except Exception as e:
-            print(f"❌ Failed to setup Vocard music system: {e}")
-            traceback.print_exc()
-            print("   Bot will continue without music features")
-        
+            logger.error(f"Failed to setup Vocard music system: {e}", exc_info=True)
+            raise
+
     async def setup_hook(self):
-        """Initialize bot systems"""
+        """Setup hook - runs after bot connects but before on_ready"""
         try:
+            logger.info("Starting bot setup...")
+            
+            # Initialize database session
+            logger.debug("Initializing database...")
+            session = get_session('global')
+            session.close()
+            
             # Setup non-music module systems with client references
-            dice.setup_dice_system(self)
-            intmsg.setup_intmsg_system(self)
-            fun.setup_fun_system(self)
-            help.setup_help_system(self)
-            inviter.setup_inviter_system(self)
-            tasks.setup_task_system(self)
-            lvl.setup_leveling_system(self)  # Leveling system
-            
-            # Register commands from non-music modules
-            dice.setup_dice_commands(self.tree)
-            intmsg.setup_intmsg_commands(self.tree)
-            fun.setup_fun_commands(self.tree)
-            help.setup_help_commands(self.tree)
-            inviter.setup_inviter_commands(self.tree)
-            quality_manager.setup_quality_commands(self.tree, self)
-            tasks.setup_task_commands(self.tree)
-            lvl.setup_level_commands(self.tree)  # Leveling commands
-            
+            try:
+                dice.setup_dice_system(self)
+                dice.setup_dice_commands(self.tree)
+                print("✅ Dice system loaded")
+            except Exception as e:
+                print(f"⚠️ Dice system failed: {e}")
+                
+            try:
+                intmsg.setup_intmsg_system(self)
+                intmsg.setup_intmsg_commands(self.tree)
+                print("✅ Interactive message system loaded")
+            except Exception as e:
+                print(f"⚠️ Interactive message system failed: {e}")
+                
+            try:
+                fun.setup_fun_system(self)
+                fun.setup_fun_commands(self.tree)
+                print("✅ Fun system loaded")
+            except Exception as e:
+                print(f"⚠️ Fun system failed: {e}")
+                
+            try:
+                help.setup_help_system(self)
+                help.setup_help_commands(self.tree)
+                print("✅ Help system loaded")
+            except Exception as e:
+                print(f"⚠️ Help system failed: {e}")
+                
+            try:
+                inviter.setup_inviter_system(self)
+                inviter.setup_inviter_commands(self.tree)
+                print("✅ Inviter system loaded")
+            except Exception as e:
+                print(f"⚠️ Inviter system failed: {e}")
+                
+            try:
+                tasks.setup_task_system(self)
+                tasks.setup_task_commands(self.tree)
+                print("✅ Task system loaded")
+            except Exception as e:
+                print(f"⚠️ Task system failed: {e}")
+                
+            try:
+                lvl.setup_leveling_system(self)
+                lvl.setup_level_commands(self.tree)
+                print("✅ Leveling system loaded")
+            except Exception as e:
+                print(f"⚠️ Leveling system failed: {e}")
+                
+            # Setup quality manager
+            try:
+                import quality_manager
+                quality_manager.setup_quality_commands(self.tree, self)
+                print("✅ Quality manager loaded")
+            except Exception as e:
+                print(f"⚠️ Quality manager failed: {e}")
+                
+            # Setup utils
+            try:
+                utils.setup_utils_commands(self.tree, self)
+                print("✅ Utils loaded")
+            except Exception as e:
+                print(f"⚠️ Utils failed: {e}")
+                
             # Add owner commands
-            setup_owner_commands(self.tree)
+            try:
+                setup_owner_commands(self.tree)
+                print("✅ Owner commands loaded")
+            except Exception as e:
+                print(f"⚠️ Owner commands failed: {e}")
             
-            # Add utils commands
-            utils.setup_utils_commands(self.tree, self)
+            # Setup music system
+            try:
+                await self.setup_vocard_music()
+                print("✅ Music system loaded")
+            except Exception as e:
+                print(f"⚠️ Music system failed: {e}")
             
-            # Set up music system
-            music_func.langs_setup()
-            
-            # Initialize MongoDB if configured
-            if music_func.settings.mongodb_url and music_func.settings.mongodb_name:
-                from motor.motor_asyncio import AsyncIOMotorClient
-                music_func.MONGO_DB = AsyncIOMotorClient(host=music_func.settings.mongodb_url)
-                music_func.SETTINGS_DB = music_func.MONGO_DB[music_func.settings.mongodb_name]["Settings"]
-                music_func.USERS_DB = music_func.MONGO_DB[music_func.settings.mongodb_name]["Users"]
-                print("✅ MongoDB connected")
-            
-            # Set up IPC if enabled
-            if music_func.settings.ipc_client.get("enable", False):
-                self.ipc = IPCClient(self, **music_func.settings.ipc_client)
-                await self.ipc.connect()
-                print("✅ IPC client connected")
-            
-            # Load music cogs
-            cogs_dir = os.path.join('MusicSystem', 'cogs')
-            for module in os.listdir(cogs_dir):
-                if module.endswith('.py'):
-                    try:
-                        await self.load_extension(f"MusicSystem.cogs.{module[:-3]}")
-                        print(f"✅ Loaded music cog: {module[:-3]}")
-                    except Exception as e:
-                        print(f"❌ Failed to load {module[:-3]}: {e}")
-            
-            # Set translator for music commands
-            await self.tree.set_translator(VocardTranslator())
-            
-            # Start scheduler and load views
+            # Start background tasks
+            logger.debug("Starting scheduler and background tasks...")
             self.scheduler.start()
-            self.scheduler.add_job(self.check_due_tasks, 'interval', hours=1)
+            self.scheduler.add_job(self.check_due_tasks, 'interval', minutes=5)
             self.scheduler.add_job(self.backup_database, 'interval', hours=6)
+            self.scheduler.add_job(self._auto_refresh_messages, 'interval', minutes=30)
             
-            # Sync all commands
-            print("Syncing commands...")
-            await self.tree.sync()
-            print("✅ Commands synced successfully!")
-            print("📋 Task commands: /task, /mytasks, /taskedit, /showtasks, /alltasks, /oldtasks, /tcw")
-            print("💬 Interactive message commands: /intmsg, /imw, /editintmsg, /listmessages, /ticketstats, /fixdb, /testpersistence")
-            print("🎲 Fun commands: /quack, /diceroll")
-            print("📨 Invite tracking commands: /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
-            print("⭐ Leveling commands: /rank, /top, /setxp, /setlevel, /lvlreset, /lvlconfig, /testxp, /testvoice, /debugxp")
-            print("🎵 Music commands: Available through Vocard cogs (/play, /skip, /pause, /resume, /stop, /queue, /volume, etc.)")
-            print("🎛️ Audio quality commands: /quality, /audiostats")
-            print("❓ Utility commands: /help")
-            print("👑 Owner commands: /multidimensionaltravel")
+            # Start keepalive tasks with more frequent checks
+            self.scheduler.add_job(self.keepalive_heartbeat, 'interval', minutes=2)
+            self.scheduler.add_job(self.rotate_activity, 'interval', minutes=10)
+            self.scheduler.add_job(self.connection_monitor, 'interval', minutes=1)
+            self.scheduler.add_job(self.log_health_stats, 'interval', minutes=15)
+            
+            logger.info("Bot setup completed successfully!")
             
         except Exception as e:
-            print(f"❌ Error in setup: {e}")
-            traceback.print_exc()
+            logger.critical("Failed to complete bot setup", exc_info=True)
+            raise
+
+    async def log_health_stats(self):
+        """Log periodic health statistics"""
+        try:
+            if not self.is_ready():
+                return
+
+            uptime = time.time() - self.health_stats['uptime_start']
+            uptime_str = str(timedelta(seconds=int(uptime)))
+            
+            memory_usage = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+            cpu_percent = psutil.Process().cpu_percent()
+            
+            logger.info("=== Bot Health Report ===")
+            logger.info(f"Uptime: {uptime_str}")
+            logger.info(f"Connected to {len(self.guilds)} guilds")
+            logger.info(f"Serving {len(self.users)} users")
+            logger.info(f"Memory Usage: {memory_usage:.1f} MB")
+            logger.info(f"CPU Usage: {cpu_percent}%")
+            logger.info(f"Latency: {self.latency * 1000:.1f}ms")
+            logger.info(f"Commands Processed: {self.health_stats['commands_processed']}")
+            logger.info(f"Errors Encountered: {self.health_stats['errors_encountered']}")
+            logger.info(f"Disconnections: {self.health_stats['disconnects']}")
+            logger.info(f"Successful Reconnections: {self.health_stats['reconnects']}")
+            logger.info("=" * 25)
+            
+        except Exception as e:
+            logger.error("Failed to log health stats", exc_info=True)
+
+    async def keepalive_heartbeat(self):
+        """Send periodic heartbeat to maintain connection"""
+        try:
+            if self.is_ready():
+                current_time = datetime.utcnow()
+                self.last_heartbeat = current_time
+                
+                # Update latency info
+                latency = round(self.latency * 1000, 2)
+                self.health_stats['last_latency'] = int(latency)  # Convert to integer for storage
+                
+                # Check for concerning latency
+                if latency > 500:  # High latency warning
+                    self.health_stats['high_latency_count'] += 1
+                    print(f"⚠️ High latency detected: {latency}ms")
+                    
+                    # Force reconnect if latency is extremely high
+                    if latency > 2000:  # 2 seconds
+                        print("🔄 Latency too high, initiating reconnection...")
+                        await self.close()
+                        return
+                        
+                else:
+                    print(f"💓 Heartbeat - Latency: {latency}ms | Guilds: {len(self.guilds)} | Users: {len(self.users)}")
+                    
+                # Reset high latency counter if connection is good
+                if latency < 200:
+                    self.health_stats['high_latency_count'] = 0
+                    
+        except Exception as e:
+            print(f"❌ Error in keepalive heartbeat: {e}")
+            self.connection_stable = False
+
+    async def rotate_activity(self):
+        """Rotate bot activity status to show it's active"""
+        try:
+            if self.is_ready() and hasattr(self, 'activities'):
+                activity = self.activities[self.current_activity_index]
+                await self.change_presence(
+                    status=discord.Status.online,
+                    activity=activity
+                )
+                self.current_activity_index = (self.current_activity_index + 1) % len(self.activities)
+                print(f"🔄 Activity rotated to: {activity.name}")
+        except Exception as e:
+            print(f"❌ Error rotating activity: {e}")
+
+    async def connection_monitor(self):
+        """Monitor connection status and handle reconnections"""
+        try:
+            if not self.is_ready():
+                logger.warning("Bot is not ready - potential connection issue")
+                self.connection_stable = False
+                return
+                
+            current_time = datetime.utcnow()
+            time_since_heartbeat = current_time - self.last_heartbeat
+            
+            # Check if we've been offline too long
+            if time_since_heartbeat.total_seconds() > 300:  # 5 minutes
+                logger.warning(f"No heartbeat for {time_since_heartbeat.total_seconds():.0f} seconds")
+                self.connection_stable = False
+                
+                # Initiate reconnection if too long without heartbeat
+                if time_since_heartbeat.total_seconds() > 600:  # 10 minutes
+                    logger.error("Connection lost for too long, initiating reconnection...")
+                    await self.close()
+                    return
+            
+            # Check if we should reset reconnection attempts
+            if self.last_reconnect_time:
+                time_since_reconnect = current_time - self.last_reconnect_time
+                if time_since_reconnect.total_seconds() > 3600:  # 1 hour
+                    self.reconnect_attempts = 0
+                    self.last_reconnect_time = None
+            
+            # Connection health report
+            if self.connection_stable:
+                if self.reconnect_attempts > 0:
+                    logger.info(f"Connection restored after {self.reconnect_attempts} attempts")
+                    self.reconnect_attempts = 0
+                    self.health_stats['reconnects'] += 1
+            
+        except Exception as e:
+            logger.error("Connection monitor failed", exc_info=True)
+            self.connection_stable = False
+
+    async def on_disconnect(self):
+        """Handle disconnect events"""
+        current_time = datetime.utcnow()
+        print("🔌 Bot disconnected from Discord")
+        self.connection_stable = False
+        self.reconnect_attempts += 1
+        self.health_stats['disconnects'] += 1
+        self.last_reconnect_time = current_time
+        
+    async def on_resumed(self):
+        """Handle resume events"""
+        print("🔌 Bot connection resumed")
+        self.last_heartbeat = datetime.utcnow()
+        self.connection_stable = True
+        
+    async def on_connect(self):
+        """Handle connection events"""
+        print("🔌 Bot connected to Discord")
+        self.last_heartbeat = datetime.utcnow()
+        self.connection_stable = True
 
     async def on_ready(self):
-        """Bot ready handler"""
-        print(f"Logged in as {self.user} (ID: {self.user.id})")
-        print(f"Discord.py API version: {discord.__version__}")
-        print("------")
-        
-        # Wait for Discord to fully load
-        print("⏳ Waiting for Discord.py to fully load all guilds and channels...")
-        await asyncio.sleep(3)
-        
-        # Check guild availability
-        unavailable_guilds = [g for g in self.guilds if g.unavailable]
-        if unavailable_guilds:
-            print(f"⚠️ {len(unavailable_guilds)} guilds are unavailable, waiting longer...")
-            await asyncio.sleep(5)
-        
-        # Update music system settings
-        music_func.settings.client_id = self.user.id
-        music_func.LOCAL_LANGS.clear()
-        music_func.MISSING_TRANSLATOR.clear()
-        
-        # Initialize systems
-        print("🔄 Starting persistence system...")
-        await self.load_persistent_views()
-        
-        print("🔄 Initializing invite tracking system...")
-        await inviter.on_ready()
-        
-        # Start task checks
-        await self.check_due_tasks()
-
-        # Sync slash commands with Discord
-        try:
-            synced = await self.tree.sync()
-            print(f"✅ Synced {len(synced)} application commands with Discord.")
-        except Exception as e:
-            print(f"❌ Failed to sync application commands: {e}")
+        """Ready event - bot is fully connected and ready"""
+        if not hasattr(self, '_first_ready'):
+            self._first_ready = True
+            print("=" * 50)
+            print(f"🎉 {self.user.name} is now online!")
+            print(f"📊 Connected to {len(self.guilds)} guilds")
+            print(f"👥 Serving {len(self.users)} users") 
+            print(f"🏷️  Bot ID: {self.user.id}")
+            print(f"🐍 Discord.py version: {discord.__version__}")
+            print("=" * 50)
+            
+            # Set initial activity
+            if hasattr(self, 'activities') and self.activities:
+                await self.change_presence(
+                    status=discord.Status.online,
+                    activity=self.activities[0]
+                )
+                
+            # Load persistent views
+            await self.load_persistent_views()
+            
+            # Initialize invite tracking
+            await inviter.on_ready()
+            
+            print("Owner commands: /multidimensionaltravel")
+            print("🌟 All systems ready! Bot is fully operational.")
+        else:
+            print("🔄 Bot reconnected successfully!")
+            
+        # Reset connection monitoring
+        self.last_heartbeat = datetime.utcnow()
+        self.reconnect_attempts = 0
 
     async def check_due_tasks(self):
         from database import TaskReminder
@@ -456,9 +776,93 @@ class PuddlesBot(commands.Bot):
                 session.close()
 
     async def on_error(self, event, *args, **kwargs):
-        print(f"Error in {event}:", file=sys.stderr)
-        traceback.print_exc()
-    
+        """Global error handler for all events"""
+        self.health_stats['errors_encountered'] += 1
+        self.health_stats['last_error_time'] = datetime.utcnow()
+        
+        error_msg = f"Error in {event}"
+        if args:
+            error_msg += f" with args: {args}"
+        if kwargs:
+            error_msg += f" and kwargs: {kwargs}"
+            
+        logger.error(error_msg, exc_info=True)
+        
+        # Log the full traceback
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
+        logger.error("Full traceback:\n" + "".join(tb_lines))
+
+    async def close(self):
+        """Clean shutdown of the bot"""
+        try:
+            logger.info("Starting bot shutdown sequence...")
+            
+            # Stop the scheduler
+            if hasattr(self, 'scheduler') and self.scheduler.running:
+                logger.info("Shutting down scheduler...")
+                self.scheduler.shutdown(wait=False)
+                logger.info("Scheduler shutdown complete")
+            
+            # Clean up music nodes
+            if hasattr(self, 'node_pool') and self.node_pool:
+                logger.info("Cleaning up music nodes...")
+                await self.cleanup_nodes()
+                self.node_pool = None
+            
+            # Close MongoDB connections
+            if music_func and hasattr(music_func, 'MONGO_DB') and music_func.MONGO_DB:
+                logger.info("Closing MongoDB connection...")
+                music_func.MONGO_DB.close()
+                music_func.MONGO_DB = None
+            
+            # Close database connections
+            try:
+                session = get_session('global')
+                if session:
+                    logger.info("Closing database sessions...")
+                    session.close()
+            except Exception as e:
+                logger.error(f"Error closing database session: {e}", exc_info=True)
+            
+            # Cancel all tasks
+            logger.info("Cancelling pending tasks...")
+            tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            for task in tasks:
+                task.cancel()
+            
+            # Wait for task cancellation
+            if tasks:
+                logger.info(f"Waiting for {len(tasks)} tasks to cancel...")
+                try:
+                    await asyncio.wait(tasks, timeout=5)
+                    logger.info("All tasks cancelled successfully")
+                except asyncio.TimeoutError:
+                    logger.warning("Some tasks did not cancel in time")
+            
+            # Close any remaining connections
+            try:
+                logger.info("Closing Discord connection...")
+                await super().close()
+                logger.info("Discord connection closed")
+            except Exception as e:
+                logger.error(f"Error closing Discord connection: {e}", exc_info=True)
+            
+            logger.info("Bot shutdown complete")
+                
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}", exc_info=True)
+        finally:
+            # Final cleanup
+            try:
+                # Clear any remaining handlers
+                handlers = logger.handlers[:]
+                for handler in handlers:
+                    handler.close()
+                    logger.removeHandler(handler)
+            except Exception as e:
+                print(f"Error during final cleanup: {e}")  # Use print as logger might be closed
+
     async def on_member_join(self, member):
         """Handle member join events for invite tracking"""
         await inviter.on_member_join(member)
@@ -1029,10 +1433,110 @@ def setup_owner_commands(tree: app_commands.CommandTree):
 
 # ============= BOT INITIALIZATION =============
 
+async def run_bot_with_reconnection():
+    """Run the bot with automatic reconnection on errors"""
+    max_retries = 10
+    retry_count = 0
+    base_delay = 5  # seconds
+    client = None
+    
+    while retry_count < max_retries:
+        try:
+            logger.info(f"Starting PuddlesBot... (Attempt {retry_count + 1}/{max_retries})")
+            
+            # Log system information on startup
+            log_system_info()
+            
+            # Create new client instance if needed
+            if not client:
+                client = PuddlesBot()
+            
+            # Start the bot
+            await client.start(os.getenv('DISCORD_TOKEN'))
+            
+        except discord.LoginFailure:
+            logger.critical("Invalid Discord token! Please check your .env file.")
+            break
+            
+        except discord.HTTPException as e:
+            logger.error(f"HTTP error occurred: {e}", exc_info=True)
+            if e.status == 429:  # Rate limited
+                retry_after = getattr(e, 'retry_after', 60)
+                logger.warning(f"Rate limited, waiting {retry_after} seconds...")
+                await asyncio.sleep(retry_after)
+            retry_count += 1
+            
+        except discord.ConnectionClosed as e:
+            logger.error(f"Connection closed: {e}", exc_info=True)
+            logger.info("Attempting to reconnect...")
+            retry_count += 1
+            
+        except (ClientConnectorError, ClientError) as e:
+            logger.error(f"Network error: {e}", exc_info=True)
+            logger.info("Waiting for network to stabilize...")
+            await asyncio.sleep(30)  # Wait longer for network issues
+            retry_count += 1
+            
+        except asyncio.CancelledError:
+            logger.info("Bot shutdown requested")
+            break
+            
+        except KeyboardInterrupt:
+            logger.info("Keyboard interrupt received, shutting down...")
+            break
+            
+        except Exception as e:
+            logger.critical("Unexpected error", exc_info=True)
+            logger.error(f"Retrying in {base_delay * (retry_count + 1)} seconds...")
+            await asyncio.sleep(base_delay * (retry_count + 1))
+            retry_count += 1
+            
+        finally:
+            # Clean up if we have a client
+            if client:
+                try:
+                    await client.close()
+                except Exception as e:
+                    logger.error(f"Error during client cleanup: {e}", exc_info=True)
+            
+        if retry_count < max_retries:
+            # Exponential backoff with max delay
+            delay = min(base_delay * (2 ** retry_count), 300)  # Max 5 minutes
+            logger.info(f"Waiting {delay} seconds before retry...")
+            await asyncio.sleep(delay)
+            
+            # Reset retry count if it's been a while since last retry
+            if retry_count > 3:
+                logger.info("Resetting retry count to prevent excessive delays...")
+                retry_count = 0
+    
+    logger.critical(f"Failed to start bot after {max_retries} attempts. Exiting.")
+    sys.exit(1)
+
 if __name__ == "__main__":
     try:
-        client = PuddlesBot()
-        client.run(os.getenv('DISCORD_TOKEN'))
+        # Check if Discord token exists
+        token = os.getenv('DISCORD_TOKEN')
+        if not token:
+            logger.critical("DISCORD_TOKEN not found in environment variables!")
+            logger.error("Please set your Discord bot token in the .env file.")
+            sys.exit(1)
+            
+        # Check Windows-specific settings
+        if os.name == 'nt':  # Windows
+            logger.info("Windows detected - Applying power management optimizations...")
+            logger.warning("IMPORTANT: To prevent disconnections:")
+            logger.info("   1. Disable 'USB selective suspend' in Power Options")
+            logger.info("   2. Set network adapter to never turn off")
+            logger.info("   3. Disable 'Fast Startup' in Power Options")
+            logger.info("   4. Consider running as administrator")
+            logger.info("")
+        
+        # Run bot with reconnection
+        asyncio.run(run_bot_with_reconnection())
+        
+    except KeyboardInterrupt:
+        logger.info("Bot shutdown requested by user")
     except Exception as e:
-        print(f"❌ Error starting bot: {e}")
+        logger.critical("Critical error starting bot", exc_info=True)
         sys.exit(1) 
