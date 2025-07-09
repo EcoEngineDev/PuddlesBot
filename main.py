@@ -25,7 +25,7 @@ import psutil
 import time
 import aiohttp
 from aiohttp import ClientConnectorError, ClientError
-
+# Made by Charlie
 # Set up logging configuration
 def setup_logging():
     """Configure detailed logging for the bot"""
