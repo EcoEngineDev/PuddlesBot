@@ -427,8 +427,13 @@ class Player(VoiceProtocol):
         track = self.queue.get()
 
         if not track:
-            if self.autoplay and await self.get_recommendations():
-                return await self.do_next()
+            if self.autoplay:
+                try:
+                    if await self.get_recommendations():
+                        return await self.do_next()
+                except Exception as e:
+                    self._logger.warning(f"Autoplay failed to get recommendations: {e}")
+                    # Optionally, you could send a message to the channel here
         else:
             try:
                 await self.play(track, start=track.position)
@@ -878,11 +883,13 @@ class Player(VoiceProtocol):
                 track = choice(self.queue.history(incTrack=True)[-5:])
             except IndexError:
                 return False
-            
-        tracks = await self._node.get_recommendations(track)
+        try:
+            tracks = await self._node.get_recommendations(track)
+        except Exception as e:
+            self._logger.warning(f"Failed to get recommendations: {e}")
+            return False
         if tracks:
             await self.add_track(tracks, duplicate=False)
-            
             self._logger.debug(f"Player in {self.guild.name}({self.guild.id}) has been requested recommendations.")
             return True
         return False

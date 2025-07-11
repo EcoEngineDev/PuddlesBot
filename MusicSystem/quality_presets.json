@@ -1,0 +1,144 @@
+{
+    "quality_presets": {
+        "ultra_high": {
+            "description": "\ud83c\udfb5 Ultra High Quality - Maximum audio fidelity with advanced processing",
+            "buffer_size": 1200,
+            "opus_quality": 10,
+            "resampling": "HIGH",
+            "prefer_lossless": true,
+            "frame_buffer_duration": 10000,
+            "track_stuck_threshold": 8000,
+            "player_update_interval": 1,
+            "use_seek_ghosting": true,
+            "non_allocating_frame_buffer": true,
+            "send_player_updates": true,
+            "auto_reconnect": true,
+            "youtube_clients": [
+                "MUSIC",
+                "ANDROID_MUSIC",
+                "ANDROID_VR",
+                "TVHTML5EMBEDDED"
+            ],
+            "audio_format_priority": [
+                "FLAC",
+                "MP3_320",
+                "MP3_256",
+                "AAC_64"
+            ],
+            "cpu_usage": "Very High",
+            "latency": "Higher",
+            "stability": "Excellent"
+        },
+        "high": {
+            "description": "\ud83c\udfb6 High Quality - Excellent audio with balanced performance",
+            "buffer_size": 1000,
+            "opus_quality": 10,
+            "resampling": "HIGH",
+            "prefer_lossless": false,
+            "frame_buffer_duration": 8000,
+            "track_stuck_threshold": 6000,
+            "player_update_interval": 1,
+            "use_seek_ghosting": true,
+            "non_allocating_frame_buffer": true,
+            "send_player_updates": true,
+            "auto_reconnect": true,
+            "youtube_clients": [
+                "MUSIC",
+                "ANDROID_MUSIC",
+                "WEB",
+                "WEBEMBEDDED"
+            ],
+            "audio_format_priority": [
+                "MP3_320",
+                "MP3_256",
+                "AAC_64"
+            ],
+            "cpu_usage": "High",
+            "latency": "Moderate",
+            "stability": "Very Good"
+        },
+        "balanced": {
+            "description": "\u2696\ufe0f Balanced - Good quality with moderate resource usage",
+            "buffer_size": 800,
+            "opus_quality": 8,
+            "resampling": "HIGH",
+            "prefer_lossless": false,
+            "frame_buffer_duration": 6000,
+            "track_stuck_threshold": 5000,
+            "player_update_interval": 2,
+            "use_seek_ghosting": true,
+            "non_allocating_frame_buffer": true,
+            "send_player_updates": true,
+            "auto_reconnect": true,
+            "youtube_clients": [
+                "ANDROID_MUSIC",
+                "WEB",
+                "WEBEMBEDDED"
+            ],
+            "audio_format_priority": [
+                "MP3_256",
+                "MP3_128",
+                "AAC_64"
+            ],
+            "cpu_usage": "Moderate",
+            "latency": "Low",
+            "stability": "Good"
+        },
+        "performance": {
+            "description": "\u26a1 Performance - Optimized for low resource usage",
+            "buffer_size": 600,
+            "opus_quality": 6,
+            "resampling": "MEDIUM",
+            "prefer_lossless": false,
+            "frame_buffer_duration": 4000,
+            "track_stuck_threshold": 4000,
+            "player_update_interval": 3,
+            "use_seek_ghosting": false,
+            "non_allocating_frame_buffer": true,
+            "send_player_updates": false,
+            "auto_reconnect": true,
+            "youtube_clients": [
+                "WEB",
+                "WEBEMBEDDED"
+            ],
+            "audio_format_priority": [
+                "MP3_128",
+                "MP3_64",
+                "AAC_64"
+            ],
+            "cpu_usage": "Low",
+            "latency": "Very Low",
+            "stability": "Fair"
+        }
+    },
+    "current_preset": "ultra_high",
+    "audio_quality": {
+        "buffer_size": 1200,
+        "default_volume": 80,
+        "volume_step": 5,
+        "max_volume": 150,
+        "enable_filters": true,
+        "enable_equalizer": true,
+        "auto_normalize": true,
+        "crossfade_duration": 2000,
+        "gapless_playback": true
+    },
+    "advanced_settings": {
+        "enable_audio_enhancement": true,
+        "dynamic_range_compression": false,
+        "bass_boost": false,
+        "treble_boost": false,
+        "stereo_enhancement": false,
+        "noise_reduction": false,
+        "echo_cancellation": false,
+        "auto_gain_control": false
+    },
+    "troubleshooting": {
+        "enable_debug_logging": false,
+        "track_performance_metrics": true,
+        "auto_quality_adjustment": false,
+        "fallback_on_errors": true,
+        "retry_failed_tracks": true,
+        "max_retries": 3
+    }
+}

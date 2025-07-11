@@ -35,22 +35,41 @@ class Listeners(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.voicelink = voicelink.NodePool()
+        self.reconnect_task = None
 
         bot.loop.create_task(self.start_nodes())
         bot.loop.create_task(self.restore_last_session_players())
         
     async def start_nodes(self) -> None:
-        """Connect and intiate nodes."""
-        for n in func.settings.nodes.values():
-            try:
-                await self.voicelink.create_node(
-                    bot=self.bot,
-                    logger=func.logger,
-                    **n
-                )
-            except Exception as e:
-                func.logger.error(f'Node {n["identifier"]} is not able to connect! - Reason: {e}')
-
+        """Connect and initiate nodes."""
+        await self.bot.wait_until_ready()
+        while True:  # Keep trying to connect to nodes
+            for n in func.settings.nodes.values():
+                try:
+                    # Skip if node is already connected
+                    if any(node.identifier == n["identifier"] for node in self.voicelink._nodes.values()):
+                        continue
+                        
+                    await self.voicelink.create_node(
+                        bot=self.bot,
+                        host=str(n["host"]),
+                        port=int(n["port"]),
+                        password=str(n["password"]),
+                        secure=bool(n["secure"]),
+                        identifier=str(n["identifier"]),
+                        logger=func.logger
+                    )
+                    func.logger.info(f'Node {n["identifier"]} connected successfully!')
+                except Exception as e:
+                    func.logger.error(f'Node {n["identifier"]} failed to connect: {e}')
+            
+            # Check if we have any working nodes
+            if self.voicelink._nodes:
+                break
+                
+            # Wait before retrying
+            await asyncio.sleep(30)
+            
     async def restore_last_session_players(self) -> None:
         """Re-establish connections for players from the last session."""
         await self.bot.wait_until_ready()
@@ -150,7 +169,59 @@ class Listeners(commands.Cog):
             pass
 
     @commands.Cog.listener()
+    async def on_voicelink_node_disconnect(self, node):
+        """Handle node disconnection."""
+        func.logger.warning(f"Node {node.identifier} disconnected! Attempting to reconnect...")
+        
+        # Clean up any players using this node
+        for player in list(node._players.values()):
+            try:
+                await player.cleanup()
+            except:
+                pass
+                
+        # Try to reconnect the node
+        try:
+            node_config = func.settings.nodes.get(node.identifier)
+            if node_config:
+                await self.voicelink.create_node(
+                    bot=self.bot,
+                    host=str(node_config["host"]),
+                    port=int(node_config["port"]),
+                    password=str(node_config["password"]),
+                    secure=bool(node_config["secure"]),
+                    identifier=str(node_config["identifier"]),
+                    logger=func.logger
+                )
+                func.logger.info(f'Node {node.identifier} reconnected successfully!')
+        except Exception as e:
+            func.logger.error(f'Failed to reconnect node {node.identifier}: {e}')
+            
+    @commands.Cog.listener()
+    async def on_voicelink_node_connect(self, node):
+        """Handle node connection."""
+        func.logger.info(f"Node {node.identifier} connected!")
+
+    @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        if member.bot and member.id == self.bot.user.id:
+            # Bot disconnected from voice
+            if before.channel and not after.channel:
+                try:
+                    # Clean up the node for this guild
+                    player: voicelink.Player = member.guild.voice_client
+                    if player:
+                        await player.cleanup()
+                        # Force node cleanup if needed
+                        if player._node:
+                            try:
+                                await player._node.disconnect()
+                            except:
+                                pass
+                except Exception as e:
+                    func.logger.error(f"Error cleaning up node on disconnect: {e}", exc_info=True)
+            return
+            
         if member.bot:
             return
         

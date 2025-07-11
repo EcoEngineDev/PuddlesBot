@@ -87,14 +87,23 @@ class Basic(commands.Cog):
             return []
 
         if current:
-            node = voicelink.NodePool.get_node()
-            if not node:
-                return []
-            tracks: list[voicelink.Track] = await node.get_tracks(current, requester=interaction.user, search_type=SearchType.SPOTIFY)
-            return [app_commands.Choice(name=truncate_string(f"🎵 {track.author} - {track.title}", 100), value=truncate_string(f"{track.author} - {track.title}", 100)) for track in tracks] if tracks else []
+            try:
+                node = voicelink.NodePool.get_node()
+                if not node:
+                    return []
+                    
+                tracks: list[voicelink.Track] = await node.get_tracks(current, requester=interaction.user, search_type=SearchType.SPOTIFY)
+                return [app_commands.Choice(name=truncate_string(f"🎵 {track.author} - {track.title}", 100), value=truncate_string(f"{track.author} - {track.title}", 100)) for track in tracks] if tracks else []
+            except Exception as e:
+                logger.error(f"Error in play_autocomplete: {e}")
+                return []  # Return empty list on error to prevent crashing
         
-        history = {track["identifier"]: track for track_id in reversed(await get_user(interaction.user.id, "history")) if (track := voicelink.decode(track_id))["uri"]}
-        return [app_commands.Choice(name=truncate_string(f"🕒 {track['author']} - {track['title']}", 100), value=track['uri']) for track in history.values() if len(track['uri']) <= 100][:25]
+        try:
+            history = {track["identifier"]: track for track_id in reversed(await get_user(interaction.user.id, "history")) if (track := voicelink.decode(track_id))["uri"]}
+            return [app_commands.Choice(name=truncate_string(f"🕒 {track['author']} - {track['title']}", 100), value=track['uri']) for track in history.values() if len(track['uri']) <= 100][:25]
+        except Exception as e:
+            logger.error(f"Error getting play history: {e}")
+            return []  # Return empty list on error to prevent crashing
             
     @commands.hybrid_command(name="connect", aliases=get_aliases("connect"))
     @app_commands.describe(channel="Provide a channel to connect.")

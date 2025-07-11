@@ -438,10 +438,15 @@ async def finalize_intmsg_creation(message, conversation):
                 ping_content += "@here "
                 # Keep @here in the description but it won't ping from embed
         
-        if description_text:
-            full_description = f"# {conversation.data['title']}\n\n{description_text}"
+        # Process emojis in title and description
+        guild = _client.get_guild(int(conversation.guild_id))
+        processed_title = process_description_emojis(conversation.data['title'], guild)
+        processed_description = process_description_emojis(description_text, guild) if description_text else ""
+        
+        if processed_description:
+            full_description = f"# {processed_title}\n\n{processed_description}"
         else:
-            full_description = f"# {conversation.data['title']}"
+            full_description = f"# {processed_title}"
         
         embed = discord.Embed(
             description=full_description,
@@ -456,10 +461,10 @@ async def finalize_intmsg_creation(message, conversation):
             sent_message = await channel.send(embed=embed)
         
         # Update embed with message ID
-        if description_text:
-            updated_description = f"# {conversation.data['title']}\n\n{description_text}\n\n-# Message ID: {sent_message.id}"
+        if processed_description:
+            updated_description = f"# {processed_title}\n\n{processed_description}\n\n-# Message ID: {sent_message.id}"
         else:
-            updated_description = f"# {conversation.data['title']}\n\n-# Message ID: {sent_message.id}"
+            updated_description = f"# {processed_title}\n\n-# Message ID: {sent_message.id}"
         
         embed.description = updated_description
         
@@ -506,7 +511,8 @@ async def finalize_intmsg_creation(message, conversation):
             if conversation.data['buttons']:
                 # Refresh the interactive_msg object with buttons
                 session.refresh(interactive_msg)
-                view = InteractiveMessageView(interactive_msg)
+                guild = _client.get_guild(int(conversation.guild_id))
+                view = InteractiveMessageView(interactive_msg, guild)
                 await sent_message.edit(embed=embed, view=view)
             else:
                 await sent_message.edit(embed=embed)
@@ -586,10 +592,15 @@ async def add_buttons_to_existing_message(message, conversation, button_type):
             color = discord.Color(int(interactive_msg.color, 16))
             description_text = interactive_msg.description if interactive_msg.description else ""
             
-            if description_text:
-                updated_description = f"# {interactive_msg.title}\n\n{description_text}\n\n-# Message ID: {interactive_msg.message_id}"
+            # Process emojis in title and description
+            guild = _client.get_guild(int(conversation.guild_id))
+            processed_title = process_description_emojis(interactive_msg.title, guild)
+            processed_description = process_description_emojis(description_text, guild) if description_text else ""
+            
+            if processed_description:
+                updated_description = f"# {processed_title}\n\n{processed_description}\n\n-# Message ID: {interactive_msg.message_id}"
             else:
-                updated_description = f"# {interactive_msg.title}\n\n-# Message ID: {interactive_msg.message_id}"
+                updated_description = f"# {processed_title}\n\n-# Message ID: {interactive_msg.message_id}"
             
             embed = discord.Embed(
                 description=updated_description,
@@ -597,7 +608,8 @@ async def add_buttons_to_existing_message(message, conversation, button_type):
             )
             
             # Update with new view
-            view = InteractiveMessageView(interactive_msg)
+            guild = _client.get_guild(int(conversation.guild_id))
+            view = InteractiveMessageView(interactive_msg, guild)
             await discord_message.edit(embed=embed, view=view)
             
             button_count = len(conversation.data['buttons'])
@@ -620,6 +632,31 @@ async def add_buttons_to_existing_message(message, conversation, button_type):
         if conversation.user_id in intmsg_conversations:
             del intmsg_conversations[conversation.user_id]
 
+def process_description_emojis(description_text, guild):
+    """
+    Process custom emoji names in description text and convert them to proper Discord emoji format.
+    This handles emojis in message descriptions like :punder: -> <:punder:123456789>
+    """
+    if not description_text or not guild:
+        return description_text
+    
+    # Find all :emoji_name: patterns in the description
+    import re
+    emoji_pattern = r':([a-zA-Z0-9_]+):'
+    
+    def replace_emoji(match):
+        emoji_name = match.group(1)
+        
+        # Search for the emoji in the guild
+        for emoji in guild.emojis:
+            if emoji.name.lower() == emoji_name.lower():
+                return str(emoji)  # This returns <:name:id> format
+        
+        # If not found, return the original text
+        return match.group(0)
+    
+    return re.sub(emoji_pattern, replace_emoji, description_text)
+
 # UI Classes
 class EditIntMsgView(discord.ui.View):
     def __init__(self, message_id):
@@ -628,7 +665,7 @@ class EditIntMsgView(discord.ui.View):
     
     @discord.ui.button(label="📝 Edit Message", style=discord.ButtonStyle.primary, emoji="✏️")
     async def edit_message(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = EditMessageModal(self.message_id)
+        modal = EditMessageModal(self.message_id, interaction.guild_id)
         await interaction.response.send_modal(modal)
     
     @discord.ui.button(label="➕ Add Ticket Button", style=discord.ButtonStyle.success, emoji="🎫")
@@ -690,6 +727,38 @@ class EditIntMsgView(discord.ui.View):
         intmsg_conversations[user_id].step = 51  # Role button step
         intmsg_conversations[user_id].data['message_id'] = self.message_id
     
+    @discord.ui.button(label="✏️ Edit Button", style=discord.ButtonStyle.secondary, emoji="🔧")
+    async def edit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        session = get_session(str(interaction.guild_id))
+        try:
+            interactive_msg = session.get(InteractiveMessage, self.message_id)
+            if not interactive_msg or not interactive_msg.buttons:
+                await interaction.response.send_message("❌ No buttons to edit!", ephemeral=True)
+                return
+            
+            # Create dropdown for button selection
+            options = []
+            for btn in interactive_msg.buttons:
+                btn_type_emoji = "🎫" if btn.button_type == 'ticket' else "👤"
+                options.append(discord.SelectOption(
+                    label=f"{btn.label} ({btn.button_type})",
+                    value=f"edit_{btn.id}",
+                    emoji=btn_type_emoji,
+                    description=f"Style: {btn.style} | Type: {btn.button_type}"
+                ))
+            
+            view = ButtonManagementView(self.message_id, options, "edit")
+            await interaction.response.send_message(
+                "Select which button to edit:",
+                view=view,
+                ephemeral=True
+            )
+        except Exception as e:
+            print(f"Error in edit button: {e}")
+            await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
+        finally:
+            session.close()
+    
     @discord.ui.button(label="🗑️ Remove Button", style=discord.ButtonStyle.danger, emoji="❌")
     async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         session = get_session(str(interaction.guild_id))
@@ -705,12 +774,12 @@ class EditIntMsgView(discord.ui.View):
                 btn_type_emoji = "🎫" if btn.button_type == 'ticket' else "👤"
                 options.append(discord.SelectOption(
                     label=f"{btn.label} ({btn.button_type})",
-                    value=str(btn.id),
+                    value=f"remove_{btn.id}",
                     emoji=btn_type_emoji,
                     description=f"Style: {btn.style} | Type: {btn.button_type}"
                 ))
             
-            view = ButtonRemovalView(self.message_id, options)
+            view = ButtonManagementView(self.message_id, options, "remove")
             await interaction.response.send_message(
                 "Select which button to remove:",
                 view=view,
@@ -728,12 +797,12 @@ class EditIntMsgView(discord.ui.View):
         await view._update_interactive_message(interaction)
 
 class EditMessageModal(discord.ui.Modal):
-    def __init__(self, message_id):
+    def __init__(self, message_id, guild_id):
         super().__init__(title="Edit Interactive Message")
         self.message_id = message_id
         
         # Load current values
-        session = get_session(str(interaction.guild_id))
+        session = get_session(str(guild_id))
         try:
             interactive_msg = session.get(InteractiveMessage, message_id)
             current_title = interactive_msg.title if interactive_msg else ""
@@ -825,10 +894,13 @@ class EditMessageModal(discord.ui.Modal):
                 
                 # Build description with larger title and message ID
                 description_text = interactive_msg.description if interactive_msg.description else ""
-                if description_text:
-                    updated_description = f"# {interactive_msg.title}\n\n{description_text}\n\n-# Message ID: {interactive_msg.message_id}"
+                # Process custom emojis in both title and description
+                processed_title = process_description_emojis(interactive_msg.title, interaction.guild)
+                processed_description = process_description_emojis(description_text, interaction.guild) if description_text else ""
+                if processed_description:
+                    updated_description = f"# {processed_title}\n\n{processed_description}\n\n-# Message ID: {interactive_msg.message_id}"
                 else:
-                    updated_description = f"# {interactive_msg.title}\n\n-# Message ID: {interactive_msg.message_id}"
+                    updated_description = f"# {processed_title}\n\n-# Message ID: {interactive_msg.message_id}"
                 
                 embed = discord.Embed(
                     description=updated_description,
@@ -837,7 +909,8 @@ class EditMessageModal(discord.ui.Modal):
                 
                 # Keep existing buttons if any
                 if interactive_msg.buttons:
-                    view = InteractiveMessageView(interactive_msg)
+                    guild = interaction.guild
+                    view = InteractiveMessageView(interactive_msg, guild)
                     await message.edit(embed=embed, view=view)
                 else:
                     await message.edit(embed=embed, view=None)
@@ -854,43 +927,204 @@ class EditMessageModal(discord.ui.Modal):
         finally:
             session.close() 
 
-class ButtonRemovalView(discord.ui.View):
-    def __init__(self, message_id, options):
+class ButtonManagementView(discord.ui.View):
+    def __init__(self, message_id, options, action):
         super().__init__(timeout=60)
         self.message_id = message_id
+        self.action = action
         
-        select = ButtonRemovalSelect(message_id, options)
+        select = ButtonManagementSelect(message_id, options, action)
         self.add_item(select)
 
-class ButtonRemovalSelect(discord.ui.Select):
-    def __init__(self, message_id, options):
+class ButtonManagementSelect(discord.ui.Select):
+    def __init__(self, message_id, options, action):
+        placeholder = "Choose a button to edit..." if action == "edit" else "Choose a button to remove..."
         super().__init__(
-            placeholder="Choose a button to remove...",
+            placeholder=placeholder,
             options=options,
             min_values=1,
             max_values=1
         )
         self.message_id = message_id
+        self.action = action
     
     async def callback(self, interaction: discord.Interaction):
         session = get_session(str(interaction.guild_id))
         try:
-            button_id = int(self.values[0])
+            # Parse the value to get action and button_id
+            action_type, button_id_str = self.values[0].split('_', 1)
+            button_id = int(button_id_str)
             button = session.get(MessageButton, button_id)
             
             if not button:
                 await interaction.response.send_message("❌ Button not found!", ephemeral=True)
                 return
             
-            button_label = button.label
-            session.delete(button)
-            session.commit()
-            
-            await interaction.response.send_message(f"✅ Button '{button_label}' removed successfully!", ephemeral=True)
+            if action_type == "remove":
+                button_label = button.label
+                session.delete(button)
+                session.commit()
+                await interaction.response.send_message(f"✅ Button '{button_label}' removed successfully!", ephemeral=True)
+                
+            elif action_type == "edit":
+                # Show edit modal for the button
+                if button.button_type == "ticket":
+                    modal = EditTicketButtonModal(button)
+                else:
+                    modal = EditRoleButtonModal(button)
+                await interaction.response.send_modal(modal)
             
         except Exception as e:
-            print(f"Error removing button: {e}")
-            await interaction.response.send_message("❌ An error occurred while removing the button.", ephemeral=True)
+            print(f"Error managing button: {e}")
+            await interaction.response.send_message("❌ An error occurred while managing the button.", ephemeral=True)
+        finally:
+            session.close()
+
+class EditTicketButtonModal(discord.ui.Modal):
+    def __init__(self, button):
+        super().__init__(title="Edit Ticket Button")
+        self.button = button
+        
+        self.label = discord.ui.TextInput(
+            label="Button Label",
+            placeholder="Enter the text on the button...",
+            required=True,
+            default=button.label,
+            max_length=80
+        )
+        self.add_item(self.label)
+        
+        self.emoji = discord.ui.TextInput(
+            label="Button Emoji",
+            placeholder="Enter an emoji (optional)...",
+            required=False,
+            default=button.emoji if button.emoji else "",
+            max_length=50
+        )
+        self.add_item(self.emoji)
+        
+        self.style = discord.ui.TextInput(
+            label="Button Style",
+            placeholder="primary, secondary, success, or danger",
+            required=False,
+            default=button.style,
+            max_length=20
+        )
+        self.add_item(self.style)
+        
+        self.name_format = discord.ui.TextInput(
+            label="Ticket Name Format",
+            placeholder="ticket-{id} or support-{user}-{id}",
+            required=True,
+            default=button.ticket_name_format if button.ticket_name_format else "ticket-{id}",
+            max_length=50
+        )
+        self.add_item(self.name_format)
+        
+        self.description = discord.ui.TextInput(
+            label="Ticket Welcome Message",
+            placeholder="Message shown when ticket is created...",
+            required=False,
+            default=button.ticket_description if button.ticket_description else "",
+            style=discord.TextStyle.paragraph,
+            max_length=1000
+        )
+        self.add_item(self.description)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        session = get_session(str(interaction.guild.id))
+        try:
+            # Update the button
+            self.button.label = self.label.value
+            self.button.emoji = self.emoji.value if self.emoji.value else None
+            self.button.style = self.style.value if self.style.value in ['primary', 'secondary', 'success', 'danger'] else 'secondary'
+            self.button.ticket_name_format = self.name_format.value
+            self.button.ticket_description = self.description.value if self.description.value else None
+            
+            session.add(self.button)
+            session.commit()
+            
+            await interaction.response.send_message("✅ Ticket button updated successfully! Use 'Update & Refresh' to see changes.", ephemeral=True)
+            
+        except Exception as e:
+            print(f"Error updating ticket button: {e}")
+            await interaction.response.send_message("❌ An error occurred while updating the button.", ephemeral=True)
+        finally:
+            session.close()
+
+class EditRoleButtonModal(discord.ui.Modal):
+    def __init__(self, button):
+        super().__init__(title="Edit Role Button")
+        self.button = button
+        
+        self.label = discord.ui.TextInput(
+            label="Button Label",
+            placeholder="Enter the text on the button...",
+            required=True,
+            default=button.label,
+            max_length=80
+        )
+        self.add_item(self.label)
+        
+        self.emoji = discord.ui.TextInput(
+            label="Button Emoji",
+            placeholder="Enter an emoji (optional)...",
+            required=False,
+            default=button.emoji if button.emoji else "",
+            max_length=50
+        )
+        self.add_item(self.emoji)
+        
+        self.style = discord.ui.TextInput(
+            label="Button Style",
+            placeholder="primary, secondary, success, or danger",
+            required=False,
+            default=button.style,
+            max_length=20
+        )
+        self.add_item(self.style)
+        
+        self.role_id = discord.ui.TextInput(
+            label="Role ID",
+            placeholder="Enter the role ID...",
+            required=True,
+            default=button.role_id if button.role_id else "",
+            max_length=20
+        )
+        self.add_item(self.role_id)
+        
+        self.action = discord.ui.TextInput(
+            label="Action",
+            placeholder="add or remove",
+            required=True,
+            default=button.role_action if button.role_action else "add",
+            max_length=10
+        )
+        self.add_item(self.action)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        session = get_session(str(interaction.guild.id))
+        try:
+            # Validate action
+            if self.action.value.lower() not in ['add', 'remove']:
+                await interaction.response.send_message("❌ Action must be 'add' or 'remove'", ephemeral=True)
+                return
+            
+            # Update the button
+            self.button.label = self.label.value
+            self.button.emoji = self.emoji.value if self.emoji.value else None
+            self.button.style = self.style.value if self.style.value in ['primary', 'secondary', 'success', 'danger'] else 'secondary'
+            self.button.role_id = self.role_id.value
+            self.button.role_action = self.action.value.lower()
+            
+            session.add(self.button)
+            session.commit()
+            
+            await interaction.response.send_message("✅ Role button updated successfully! Use 'Update & Refresh' to see changes.", ephemeral=True)
+            
+        except Exception as e:
+            print(f"Error updating role button: {e}")
+            await interaction.response.send_message("❌ An error occurred while updating the button.", ephemeral=True)
         finally:
             session.close()
 
@@ -934,10 +1168,13 @@ class MessageManagementView(discord.ui.View):
             
             # Build description with larger title and message ID
             description_text = interactive_msg.description if interactive_msg.description else ""
-            if description_text:
-                updated_description = f"# {interactive_msg.title}\n\n{description_text}\n\n-# Message ID: {interactive_msg.message_id}"
+            # Process custom emojis in both title and description
+            processed_title = process_description_emojis(interactive_msg.title, interaction.guild)
+            processed_description = process_description_emojis(description_text, interaction.guild) if description_text else ""
+            if processed_description:
+                updated_description = f"# {processed_title}\n\n{processed_description}\n\n-# Message ID: {interactive_msg.message_id}"
             else:
-                updated_description = f"# {interactive_msg.title}\n\n-# Message ID: {interactive_msg.message_id}"
+                updated_description = f"# {processed_title}\n\n-# Message ID: {interactive_msg.message_id}"
             
             embed = discord.Embed(
                 description=updated_description,
@@ -946,7 +1183,8 @@ class MessageManagementView(discord.ui.View):
             
             # Create view with buttons
             if interactive_msg.buttons:
-                view = InteractiveMessageView(interactive_msg)
+                guild = interaction.guild
+                view = InteractiveMessageView(interactive_msg, guild)
                 await message.edit(embed=embed, view=view)
             else:
                 await message.edit(embed=embed, view=None)

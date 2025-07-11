@@ -8,6 +8,8 @@ import discord
 from discord import app_commands
 import asyncio
 from database import get_session, Base, get_engine
+import json
+import re
 
 # Database Models for Ticket System
 class InteractiveMessage(Base):
@@ -79,19 +81,19 @@ def init_ticket_db(server_id):
 
 # Discord UI Components
 class InteractiveMessageView(discord.ui.View):
-    def __init__(self, message_data):
+    def __init__(self, message_data, guild=None):
         super().__init__(timeout=None)
         self.message_data = message_data
         
         for button_data in message_data.buttons:
             if button_data.button_type == 'ticket':
-                button = TicketButton(button_data)
+                button = TicketButton(button_data, guild)
             else:
-                button = RoleButton(button_data)
+                button = RoleButton(button_data, guild)
             self.add_item(button)
 
 class TicketButton(discord.ui.Button):
-    def __init__(self, button_data):
+    def __init__(self, button_data, guild=None):
         style_map = {
             'primary': discord.ButtonStyle.primary,
             'secondary': discord.ButtonStyle.secondary,
@@ -99,10 +101,13 @@ class TicketButton(discord.ui.Button):
             'danger': discord.ButtonStyle.danger
         }
         
+        # Parse emoji with guild context
+        parsed_emoji = parse_emoji(button_data.emoji, guild) if button_data.emoji and guild else button_data.emoji
+        
         super().__init__(
             label=button_data.label,
             style=style_map.get(button_data.style, discord.ButtonStyle.secondary),
-            emoji=button_data.emoji if button_data.emoji else None,
+            emoji=parsed_emoji,
             custom_id=f"ticket_btn_{button_data.id}"
         )
         self.button_data = button_data
@@ -210,7 +215,6 @@ class TicketButton(discord.ui.Button):
             
             # Add question answers if provided
             if answers:
-                import json
                 try:
                     qa_data = json.loads(answers)
                     qa_text = "\n".join([f"**{qa['question']}**\n{qa['answer']}" for qa in qa_data])
@@ -284,7 +288,6 @@ class TicketQuestionsModal(discord.ui.Modal):
                 })
         
         # Convert to JSON for storage
-        import json
         answers_json = json.dumps(answers)
         
         # Create the ticket with answers
@@ -292,7 +295,7 @@ class TicketQuestionsModal(discord.ui.Modal):
         await ticket_button.create_ticket(interaction, answers_json)
 
 class RoleButton(discord.ui.Button):
-    def __init__(self, button_data):
+    def __init__(self, button_data, guild=None):
         style_map = {
             'primary': discord.ButtonStyle.primary,
             'secondary': discord.ButtonStyle.secondary,
@@ -300,10 +303,13 @@ class RoleButton(discord.ui.Button):
             'danger': discord.ButtonStyle.danger
         }
         
+        # Parse emoji with guild context
+        parsed_emoji = parse_emoji(button_data.emoji, guild) if button_data.emoji and guild else button_data.emoji
+        
         super().__init__(
             label=button_data.label,
             style=style_map.get(button_data.style, discord.ButtonStyle.secondary),
-            emoji=button_data.emoji if button_data.emoji else None,
+            emoji=parsed_emoji,
             custom_id=f"role_btn_{button_data.id}"
         )
         self.button_data = button_data
@@ -354,8 +360,9 @@ class TicketControlView(discord.ui.View):
             is_creator = str(interaction.user.id) == ticket.creator_id
             is_staff = any(role.name.lower() in ['staff', 'admin', 'mod', 'support'] 
                           for role in interaction.user.roles)
+            is_admin = interaction.user.guild_permissions.administrator
             
-            if not (is_creator or is_staff):
+            if not (is_creator or is_staff or is_admin):
                 await interaction.response.send_message("❌ You don't have permission to close this ticket!", ephemeral=True)
                 return
             
@@ -482,3 +489,37 @@ class ButtonSetupModal(discord.ui.Modal):
             await interaction.response.send_message("❌ An error occurred while adding the button.", ephemeral=True)
         finally:
             session.close() 
+
+def parse_emoji(emoji_text, guild):
+    """
+    Parse emoji text and return appropriate emoji object for Discord buttons.
+    Handles custom emojis like :punder: and converts them to Discord emoji objects.
+    """
+    if not emoji_text:
+        return None
+    
+    emoji_text = emoji_text.strip()
+    
+    # If it's already a Discord emoji object or unicode emoji, return as is
+    if isinstance(emoji_text, discord.Emoji) or isinstance(emoji_text, discord.PartialEmoji):
+        return emoji_text
+    
+    # Check if it's a custom emoji pattern like :punder:
+    if emoji_text.startswith(':') and emoji_text.endswith(':'):
+        emoji_name = emoji_text[1:-1]  # Remove the colons
+        
+        # Search for the emoji in the guild
+        for emoji in guild.emojis:
+            if emoji.name.lower() == emoji_name.lower():
+                return emoji
+        
+        # If not found in guild, return the text as is (will be treated as unicode)
+        return emoji_text
+    
+    # Check if it's a Discord emoji ID format like <:name:123456789>
+    emoji_match = re.match(r'<a?:(\w+):(\d+)>', emoji_text)
+    if emoji_match:
+        return discord.PartialEmoji(name=emoji_match.group(1), id=int(emoji_match.group(2)))
+    
+    # If it's just text (unicode emoji or plain text), return as is
+    return emoji_text 
