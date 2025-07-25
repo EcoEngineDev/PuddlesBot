@@ -1,13 +1,13 @@
 # Puddles Bot 2.1
-
-## Add Puddles to Your Server:
-https://discord.com/oauth2/authorize?client_id=1388695231578509352&permissions=8&integration_type=0&scope=bot
-
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Discord.py](https://img.shields.io/badge/discord.py-2.0+-blue.svg)](https://github.com/Rapptz/discord.py)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**PuddlesBot2** is a comprehensive Discord bot featuring task management, leveling systems, music streaming, interactive messages, and much more. Built with modern Discord.py and designed for optimal performance and user experience.
+## Add Puddles to Your Server:
+https://discord.com/oauth2/authorize?client_id=1388695231578509352&permissions=8&integration_type=0&scope=bot
+
+
+## **PuddlesBot2** is a comprehensive Discord bot featuring task management, leveling systems, music streaming, interactive messages, and much more. Built with modern Discord.py and designed for optimal performance and user experience.
 
 ## ✨ Key Features
 
@@ -46,7 +46,7 @@ https://discord.com/oauth2/authorize?client_id=1388695231578509352&permissions=8
 3. **Configure the bot**
    - Create a .env file with a structure like the one below
    
-   ```.env
+```.env
 DISCORD_TOKEN=
 TOKEN=
 DISCORD_CLIENT_ID=
@@ -61,7 +61,7 @@ LAVALINK_SECURE=
 GENIUS_TOKEN=
 MONGODB_URL=
 MONGODB_NAME=
-   ```
+```
 
 4. **Set up Lavalink (for music features)**
    - The bot uses Lavalink for music streaming
