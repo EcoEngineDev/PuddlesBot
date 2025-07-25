@@ -38,9 +38,46 @@ def log_command(func):
 
 # ============= VOICE TRACKING =============
 
+def should_get_voice_xp(member: discord.Member, channel: discord.VoiceChannel) -> bool:
+    """
+    Check if a user should get voice XP based on various conditions:
+    - Not alone in the channel
+    - Not deafened
+    - At least 2 real people (not bots) in the channel
+    """
+    if member.bot:
+        return False
+        
+    # Check if user is deafened
+    if member.voice and member.voice.deaf:
+        return False
+        
+    # Count real people (non-bots) in the channel
+    real_people = [m for m in channel.members if not m.bot]
+    
+    # Need at least 2 real people (including the user)
+    if len(real_people) < 2:
+        return False
+        
+    return True
+
 class VoiceTracker:
     def __init__(self):
         self.voice_sessions: Dict[int, Dict[int, datetime]] = {}  # guild_id -> {user_id: join_time}
+        self.periodic_update_task = None
+        
+    def start_periodic_updates(self):
+        """Start periodic voice XP updates"""
+        if self.periodic_update_task is None:
+            self.periodic_update_task = asyncio.create_task(self._periodic_voice_xp_update())
+            print("🔄 Started periodic voice XP updates")
+        
+    def stop_periodic_updates(self):
+        """Stop periodic voice XP updates"""
+        if self.periodic_update_task:
+            self.periodic_update_task.cancel()
+            self.periodic_update_task = None
+            print("🛑 Stopped periodic voice XP updates")
         
     def user_joined_voice(self, guild_id: int, user_id: int, channel: discord.VoiceChannel):
         """Track when a user joins a voice channel"""
@@ -50,12 +87,27 @@ class VoiceTracker:
         if guild_id not in self.voice_sessions:
             self.voice_sessions[guild_id] = {}
             
-        # Only track if there are other people in the channel (anti-AFK)
-        if len(channel.members) > 1:
+        # Get the member object to check conditions
+        member = channel.guild.get_member(user_id)
+        if not member:
+            print(f"   🚫 Could not find member {user_id} in guild {guild_id}")
+            return
+            
+        # Check if user should get voice XP
+        if should_get_voice_xp(member, channel):
             self.voice_sessions[guild_id][user_id] = datetime.utcnow()
-            print(f"   ✅ Voice tracking started for user {user_id} - {len(channel.members)} people in channel")
+            real_people = [m for m in channel.members if not m.bot]
+            print(f"   ✅ Voice tracking started for user {user_id} - {len(real_people)} real people in channel")
+            
+            # Start periodic updates if not already running
+            self.start_periodic_updates()
         else:
-            print(f"   🚫 Not tracking voice for user {user_id} - alone in channel")
+            # Check why they're not eligible
+            if member.voice and member.voice.deaf:
+                print(f"   🚫 Not tracking voice for user {user_id} - user is deafened")
+            else:
+                real_people = [m for m in channel.members if not m.bot]
+                print(f"   🚫 Not tracking voice for user {user_id} - only {len(real_people)} real people in channel (need 2+)")
             
     def user_left_voice(self, guild_id: int, user_id: int) -> Optional[int]:
         """Calculate voice time when user leaves and award XP"""
@@ -84,11 +136,71 @@ class VoiceTracker:
             # Award XP for time in old channel
             voice_time = self.user_left_voice(guild_id, user_id)
             if voice_time:
+                # Create task for async award
                 asyncio.create_task(self._award_voice_xp(guild_id, user_id, voice_time))
                 
         if new_channel:
             # Start tracking in new channel
             self.user_joined_voice(guild_id, user_id, new_channel)
+            
+    async def _periodic_voice_xp_update(self):
+        """Periodically award voice XP to users who are in voice channels"""
+        while True:
+            try:
+                await asyncio.sleep(60)  # Check every minute
+                
+                current_time = datetime.utcnow()
+                users_to_award = []
+                users_to_remove = []
+                
+                # Check all active voice sessions
+                for guild_id, sessions in self.voice_sessions.items():
+                    for user_id, join_time in sessions.items():
+                        # Get the guild and member to check current conditions
+                        guild = _client.get_guild(guild_id) if _client else None
+                        if not guild:
+                            users_to_remove.append((guild_id, user_id))
+                            continue
+                            
+                        member = guild.get_member(user_id)
+                        if not member or not member.voice or not member.voice.channel:
+                            users_to_remove.append((guild_id, user_id))
+                            continue
+                            
+                        # Check if user should still get voice XP
+                        if not should_get_voice_xp(member, member.voice.channel):
+                            users_to_remove.append((guild_id, user_id))
+                            continue
+                            
+                        duration = (current_time - join_time).total_seconds() / 60  # minutes
+                        
+                        # Award XP every minute (minimum 1 minute)
+                        if duration >= 1:
+                            minutes_to_award = int(duration)
+                            users_to_award.append((guild_id, user_id, minutes_to_award))
+                            
+                            # Update join time to current time (reset the timer)
+                            self.voice_sessions[guild_id][user_id] = current_time
+                
+                # Remove users who no longer qualify
+                for guild_id, user_id in users_to_remove:
+                    if guild_id in self.voice_sessions and user_id in self.voice_sessions[guild_id]:
+                        del self.voice_sessions[guild_id][user_id]
+                        print(f"🔄 Removed user {user_id} from voice tracking - no longer eligible")
+                
+                # Award XP to all users
+                for guild_id, user_id, minutes in users_to_award:
+                    try:
+                        await self._award_voice_xp(guild_id, user_id, minutes)
+                    except Exception as e:
+                        print(f"❌ Error in periodic voice XP update for user {user_id}: {e}")
+                        
+            except asyncio.CancelledError:
+                print("🛑 Periodic voice XP update task cancelled")
+                break
+            except Exception as e:
+                print(f"❌ Error in periodic voice XP update: {e}")
+                await asyncio.sleep(60)  # Wait before retrying
             
     async def _award_voice_xp(self, guild_id: int, user_id: int, minutes: int):
         """Award voice XP for time spent in voice"""
@@ -104,13 +216,13 @@ class VoiceTracker:
                 session.add(settings)
                 session.flush()
                 
-            if not settings.voice_xp_enabled:
+            if not settings.voice_xp_enabled:  # type: ignore
                 print(f"   Voice XP disabled for guild {guild_id}")
                 return
                 
             # Calculate XP
-            base_xp = minutes * settings.voice_xp_rate
-            xp_to_award = int(base_xp * settings.multiplier)
+            base_xp = minutes * settings.voice_xp_rate  # type: ignore
+            xp_to_award = int(base_xp * settings.multiplier)  # type: ignore
             print(f"   Voice XP calculation: {minutes} min * {settings.voice_xp_rate} rate * {settings.multiplier} multiplier = {xp_to_award} XP")
             
             # Get or create user level
@@ -135,14 +247,14 @@ class VoiceTracker:
                 session.flush()
                 
             # Award XP and update stats
-            old_level = user_level.voice_level
-            old_xp = user_level.voice_xp
-            old_voice_time = user_level.total_voice_time
+            old_level = int(user_level.voice_level) if user_level.voice_level is not None else 0  # type: ignore
+            old_xp = int(user_level.voice_xp) if user_level.voice_xp is not None else 0  # type: ignore
+            old_voice_time = int(user_level.total_voice_time) if user_level.total_voice_time is not None else 0  # type: ignore
             
-            user_level.voice_xp += xp_to_award
-            user_level.total_voice_time += minutes
-            user_level.last_voice_update = datetime.utcnow()
-            user_level.voice_level = calculate_level(user_level.voice_xp)
+            user_level.voice_xp = old_xp + xp_to_award  # type: ignore
+            user_level.total_voice_time = old_voice_time + minutes  # type: ignore
+            user_level.last_voice_update = datetime.utcnow()  # type: ignore
+            user_level.voice_level = calculate_level(old_xp + xp_to_award)  # type: ignore
             
             print(f"   Voice XP updated: {old_xp} -> {user_level.voice_xp}")
             print(f"   Voice time updated: {old_voice_time} -> {user_level.total_voice_time} minutes")
@@ -151,9 +263,10 @@ class VoiceTracker:
             session.commit()
             
             # Check for level up
-            if user_level.voice_level > old_level:
-                print(f"   🎉 Voice level up! {old_level} -> {user_level.voice_level}")
-                await self._handle_level_up(guild_id, user_id, old_level, user_level.voice_level, "voice")
+            new_level = calculate_level(old_xp + xp_to_award)
+            if new_level > old_level:
+                print(f"   🎉 Voice level up! {old_level} -> {new_level}")
+                await self._handle_level_up(guild_id, user_id, old_level, new_level, "voice")
                 
             print(f"   ✅ Successfully awarded {xp_to_award} voice XP to user {user_id}")
             
@@ -459,20 +572,20 @@ async def handle_voice_state_update(member: discord.Member, before: discord.Voic
             
         # User stayed in same channel but something changed (mute, deafen, etc.)
         elif before.channel == after.channel and after.channel:
-            channel_members = len(after.channel.members)
-            print(f"   ⚡ Same channel state change - {channel_members} members in {after.channel.name}")
+            print(f"   ⚡ Same channel state change in {after.channel.name}")
             
-            # If user is now alone, stop tracking
-            if channel_members == 1 and user_id in voice_tracker.voice_sessions.get(guild_id, {}):
-                print(f"   🚫 User is now alone, stopping tracking")
+            # Check if user should still get voice XP
+            should_get_xp = should_get_voice_xp(member, after.channel)
+            currently_tracked = user_id in voice_tracker.voice_sessions.get(guild_id, {})
+            
+            if should_get_xp and not currently_tracked:
+                print(f"   ✅ User now qualifies for voice XP, starting tracking")
+                voice_tracker.user_joined_voice(guild_id, user_id, after.channel)
+            elif not should_get_xp and currently_tracked:
+                print(f"   🚫 User no longer qualifies for voice XP, stopping tracking")
                 voice_time = voice_tracker.user_left_voice(guild_id, user_id)
                 if voice_time:
                     await voice_tracker._award_voice_xp(guild_id, user_id, voice_time)
-                    
-            # If user is no longer alone, start tracking
-            elif channel_members > 1 and user_id not in voice_tracker.voice_sessions.get(guild_id, {}):
-                print(f"   👥 User is no longer alone, starting tracking")
-                voice_tracker.user_joined_voice(guild_id, user_id, after.channel)
             else:
                 print(f"   ➡️ No tracking change needed")
                 
@@ -641,6 +754,112 @@ def setup_level_commands(tree: app_commands.CommandTree):
         except Exception as e:
             await interaction.followup.send(
                 f"❌ Error testing voice XP: {str(e)}",
+                ephemeral=True
+            )
+
+    @tree.command(
+        name="voicestatus",
+        description="Check current voice tracking status (Admin only)"
+    )
+    @app_commands.default_permissions(administrator=True)
+    @log_command
+    async def voicestatus(interaction: discord.Interaction):
+        """Check the current voice tracking status"""
+        try:
+            await interaction.response.defer()
+            
+            guild_id = interaction.guild_id
+            guild_sessions = voice_tracker.voice_sessions.get(guild_id, {})
+            
+            embed = discord.Embed(
+                title="🎙️ Voice Tracking Status",
+                description=f"Voice tracking status for **{interaction.guild.name}**",
+                color=discord.Color.blue()
+            )
+            
+            # Overall status
+            embed.add_field(
+                name="📊 Overall Status",
+                value=f"**Periodic Updates:** {'✅ Running' if voice_tracker.periodic_update_task and not voice_tracker.periodic_update_task.done() else '❌ Stopped'}\n"
+                      f"**Active Sessions:** {len(guild_sessions)} users",
+                inline=False
+            )
+            
+            # Active voice sessions
+            if guild_sessions:
+                session_details = []
+                current_time = datetime.utcnow()
+                
+                for user_id, join_time in guild_sessions.items():
+                    try:
+                        member = interaction.guild.get_member(user_id)
+                        name = member.display_name if member else f"User {user_id}"
+                        duration = (current_time - join_time).total_seconds() / 60
+                        session_details.append(f"• **{name}**: {duration:.1f} minutes")
+                    except Exception as e:
+                        session_details.append(f"• **User {user_id}**: Error getting info")
+                
+                embed.add_field(
+                    name="👥 Active Voice Sessions",
+                    value="\n".join(session_details),
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="👥 Active Voice Sessions",
+                    value="No active voice sessions",
+                    inline=False
+                )
+            
+            # Voice channels with users
+            voice_channels = [c for c in interaction.guild.voice_channels if c.members]
+            if voice_channels:
+                channel_info = []
+                for channel in voice_channels:
+                    member_count = len(channel.members)
+                    real_people = [m for m in channel.members if not m.bot]
+                    real_count = len(real_people)
+                    tracked_count = sum(1 for member in channel.members if member.id in guild_sessions)
+                    
+                    # Check conditions for each real person
+                    eligible_count = 0
+                    for member in real_people:
+                        if should_get_voice_xp(member, channel):
+                            eligible_count += 1
+                    
+                    status_emoji = "✅" if eligible_count > 0 else "❌"
+                    channel_info.append(
+                        f"{status_emoji} **{channel.name}**: {member_count} total ({real_count} real, {eligible_count} eligible, {tracked_count} tracked)"
+                    )
+                
+                embed.add_field(
+                    name="🎵 Voice Channels",
+                    value="\n".join(channel_info),
+                    inline=False
+                )
+                
+                # Add explanation
+                embed.add_field(
+                    name="📋 Eligibility Rules",
+                    value="• ✅ = Channel has eligible users (2+ real people, not deafened)\n"
+                          "• ❌ = No eligible users (alone, deafened, or only bots)\n"
+                          "• **Real people** = Non-bot users\n"
+                          "• **Eligible** = Users who can earn voice XP\n"
+                          "• **Tracked** = Users currently being tracked",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🎵 Voice Channels",
+                    value="No users in voice channels",
+                    inline=False
+                )
+            
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Error checking voice status: {str(e)}",
                 ephemeral=True
             )
     

@@ -1,12 +1,57 @@
-# Puddles Discord Bot Version 2.0 🦆🤖
+# Puddles Bot 2.1
 
-A comprehensive Discord bot featuring task management, interactive ticket systems, leveling system, invite tracking, music streaming, audio quality management, and server utilities! Built for 24/7 operation with persistent data storage and optimized performance.  FOR THE BOT TO RUN YOU WILL NEED TO CREATE YOUR OWN .ENV FILE FORMATTED SIMILARLY TO WHAT IS BELOW.
+## Add Puddles to Your Server:
+https://discord.com/oauth2/authorize?client_id=1388695231578509352&permissions=8&integration_type=0&scope=bot
 
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Discord.py](https://img.shields.io/badge/discord.py-2.0+-blue.svg)](https://github.com/Rapptz/discord.py)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+**PuddlesBot2** is a comprehensive Discord bot featuring task management, leveling systems, music streaming, interactive messages, and much more. Built with modern Discord.py and designed for optimal performance and user experience.
+
+## ✨ Key Features
+
+- 📋 **Task Management** - A task system that stores everything
+- ⭐ **Leveling System** - Separate text and voice XP tracking with anti-spam
+- 🎵 **High-Quality Music Streaming** - Multi-platform support via Vocard & Lavalink
+- 🎫 **Interactive Messages & Tickets** - Custom buttons for tickets and role management
+- 📊 **Invite Tracking & Analytics** - Monitor server growth and invite sources
+- 🎮 **Random Commands** - Memes, duck photos, coinflip with images, dice rolling
+- 🔧 **Server Utilities** - Moderation tools, user info, and administrative features
+- 🔄 **Persistent Views** - All systems work on reboot
+- 📄 **Smart Pagination** - Easy navigation for large task lists
+
+## 🚀 Quick Setup
+
+### Prerequisites
+
+- Python 3.8 or higher
+- Discord Bot Token
+- SQLite (included with Python)
+- Git
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/PuddlesBot2.git
+   cd PuddlesBot2
+   ```
+
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Configure the bot**
+   - Create a .env file with a structure like the one below
+   
+   ```.env
 DISCORD_TOKEN=
 TOKEN=
 DISCORD_CLIENT_ID=
 BOT_OWNER_ID=
-# Lavalink Configuration for Music
+# Lavalink Configuration
 LAVALINK_HOST=
 LAVALINK_PORT=
 LAVALINK_PASSWORD=
@@ -16,353 +61,256 @@ LAVALINK_SECURE=
 GENIUS_TOKEN=
 MONGODB_URL=
 MONGODB_NAME=
+   ```
 
-## ✨ Features Overview
+4. **Set up Lavalink (for music features)**
+   - The bot uses Lavalink for music streaming
+   - Default configuration connects to a public Lavalink node
+   - For production, consider hosting your own Lavalink instance
 
-### 📋 **Task Management System**
-- Create, edit, and track tasks with due dates
-- Assign tasks to team members
-- View completed task history with statistics
-- Automatic notifications for due tasks (7d, 3d, 1d reminders)
-- **⚡ High-performance loading** - All commands load in 2-5 seconds
-- Paginated task viewing for large lists
-- Admin controls and user whitelisting
+5. **Run the bot**
+   ```bash
+   python main.py
+   ```
 
-### 🎫 **Interactive Message & Ticket System**
-- Create interactive messages with customizable buttons
-- Support ticket system with custom questions
-- Role assignment/removal buttons
-- Persistent views (buttons work after bot restarts)
-- Staff management tools and statistics
+## 📋 Command Reference
 
-### ⭐ **Advanced Leveling System**
-- Dual XP tracking (separate text and voice XP)
-- Beautiful rank cards with progress bars
-- Server leaderboards with multiple sorting options
-- Anti-spam and anti-AFK protection
-- Configurable XP rates and cooldowns
-- Role rewards for level milestones
-- Real-time voice time tracking
+### Task Management Commands
 
-### 📊 **Invite Tracking System**
-- Track who invites new members to your server
-- View top inviters with detailed statistics
-- Monitor invite usage and retention rates
-- Reset and manage invite data
-- Comprehensive server growth analytics
-- Automatic invite syncing
+| Command | Description | Permissions |
+|---------|-------------|-------------|
+| `/task` | Create new task assigned to multiple users | Whitelist/Admin |
+| `/mytasks` | View all tasks assigned to you | All users |
+| `/taskedit` | Edit existing tasks or delete them | Creator/Admin |
+| `/snipe` | Claim credit for completed tasks (admin approval required) | All users |
+| `/showtasks @user` | View tasks assigned to specific user | All users |
+| `/alltasks` | View all active server tasks (paginated) | All users |
+| `/oldtasks @user` | View completed tasks with statistics | All users |
+| `/tcw @user add/remove` | Manage task creator whitelist | Admin |
+| `/setsnipe #channel` | Set channel for snipe requests | Admin |
+| `/clearsnipes` | Clear all pending snipe requests | Admin |
 
-### 🎵 **Advanced Music System (Vocard)**
-- Multi-platform music streaming (YouTube, Spotify, SoundCloud, etc.)
-- High-quality audio with customizable presets
-- Full music controls (play, pause, skip, queue, volume)
-- Advanced features (shuffle, loop modes, search)
-- Music request channels for seamless integration
-- Performance monitoring and optimization
+**Features:**
+- **Multi-Assignee Support**: Assign tasks to multiple users with `@user1 @user2 @user3`
+- **Task Sniping**: Claim credit for tasks you completed but weren't assigned to
+- **No Late Penalty**: Sniped tasks won't be marked as late even if approved after due date
+- **Smart Display**: Shows all assignees in task views with clear sniping indicators
 
-### 🎛️ **Audio Quality Management**
-- Fine-tune music system audio quality presets
-- Real-time audio statistics and performance metrics
-- Optimize for different server performance levels
-- Buffer size and quality settings control
-- Ultra High, High, Balanced, and Performance modes
+### Interactive Messages & Tickets
 
-### 🔧 **Server Utilities**
-- Voice channel management and user movement
-- User profiles and avatar display
-- Server information and statistics
-- Role management with pagination support
-- Moderation tools (ban, kick, message purge)
-- Advanced user lookup features
+| Command | Description | Permissions |
+|---------|-------------|-------------|
+| `/intmsg` | Create interactive messages with buttons | Whitelist/Admin |
+| `/editintmsg [message_id]` | Edit existing interactive messages | Staff |
+| `/listmessages` | List all interactive messages in server | Staff |
+| `/ticketstats` | View ticket statistics and activity | Staff |
+| `/imw @user add/remove` | Manage interactive message creator whitelist | Admin |
 
-### 🎮 **Fun & Entertainment**
-- Random duck image generator with high-quality images
-- Advanced dice rolling with visual results and statistics
-- Interactive games and entertainment features
-- Customizable fun commands for server engagement
+**Features:**
+- **Ticket Creation**: Custom questions and automated ticket channels
+- **Role Management**: Assign/remove roles with interactive buttons
+- **Persistent**: Buttons work even after bot restarts
+- **Custom Styling**: Full embed customization with colors and content
 
-### 🛠️ **Advanced Technical Features**
-- Database persistence and automatic backups (every 6 hours)
-- @everyone/@here ping support in interactive messages
-- Multi-line formatting for large outputs
-- Permission-based command access with detailed controls
-- Automatic database schema management and migration
-- Smart pagination for large datasets
-- Persistent views across bot restarts
+### Leveling System Commands
 
-## 🚀 Quick Start
+| Command | Description | Permissions |
+|---------|-------------|-------------|
+| `/rank @user` | View detailed rank card with progress bars | All users |
+| `/top` | Display leaderboards (text/voice/total XP) | All users |
+| `/setxp @user` | Set user's text or voice XP | Admin |
+| `/setlevel @user` | Set user's text or voice level | Admin |
+| `/lvlreset @user` | Reset user's levels and XP data | Admin |
+| `/lvlconfig` | Configure XP rates and server settings | Admin |
+| `/testxp @user` | Manually award XP for testing | Admin |
+| `/testvoice @user` | Simulate voice time for testing | Admin |
+| `/debugxp @user` | Debug XP system status for user | Admin |
 
-1. **Bot Setup:**
-   - Create a Discord application at [Discord Developer Portal](https://discord.com/developers/applications)
-   - Get your bot token and invite the bot to your server with appropriate permissions
-   - Set up hosting (Replit, VPS, cloud hosting, etc.)
+**Features:**
+- **Dual XP System**: Separate text and voice XP tracking
+- **Anti-Spam Protection**: Cooldowns prevent XP farming
+- **Visual Progress**: Beautiful rank cards with progress bars
+- **Server Rankings**: Compare progress with other members
 
-2. **Environment Setup:**
-   - Add your bot token as `TOKEN` in environment variables
-   - Install required packages: `pip install -r requirements.txt`
-   - Run the bot: `python main.py`
+### Invite Tracking Commands
 
-3. **First Steps:**
-   - Use `/help` to see all available commands
-   - Set up task creator whitelist with `/tcw`
-   - Create your first interactive message with `/intmsg`
-   - Configure leveling system with `/lvlconfig`
+| Command | Description | Permissions |
+|---------|-------------|-------------|
+| `/topinvite` | Show top 10 inviters in server | All users |
+| `/showinvites @user` | Detailed invite statistics for user | All users |
+| `/resetinvites` | Reset all invite data (with confirmation) | Admin |
+| `/editinvites @user` | Edit user's invite statistics | Admin |
+| `/invw @user add/remove` | Manage invite admin whitelist | Admin |
+| `/invitesync` | Manually sync invite data | Admin |
+| `/invitestats` | Show comprehensive server invite statistics | Admin |
+| `/invitereset` | Reset invite tracking tables (⚠️ deletes all data) | Admin |
 
-## 📚 Complete Command Reference
+**Features:**
+- **Growth Analytics**: Track server growth and invite effectiveness
+- **Success Rates**: Monitor invite conversion rates
+- **Historical Data**: Comprehensive statistics and trends
 
-### 📋 **Task Management**
-- `/task` - Create a new task with assignee, due date, and description
-- `/mytasks` - View all your assigned tasks with status
-- `/taskedit` - Edit your existing tasks (name, due date, description, assignee)
-- `/showtasks @user` - View tasks assigned to someone else
-- `/alltasks` - **[Admin]** View all server tasks (paginated) ⚡ **Fast loading!**
-- `/oldtasks @user` - View completed tasks with comprehensive statistics
-- `/tcw @user add/remove` - **[Admin]** Manage task creator permissions
+### Music System Commands (Vocard)
 
-### 🎫 **Interactive Messages & Tickets**
-- `/intmsg` - Create interactive messages with ticket/role buttons
-- `/editintmsg [message_id]` - **[Staff]** Edit existing interactive messages
-- `/listmessages` - **[Staff]** List all interactive messages in the server
-- `/ticketstats` - **[Staff]** View detailed ticket statistics
-- `/imw @user add/remove` - **[Admin]** Manage interactive message permissions
+| Command | Description | Permissions |
+|---------|-------------|-------------|
+| `/play [song]` | Play music from YouTube, Spotify, SoundCloud, etc. | All users |
+| `/pause` / `/resume` | Pause or resume current track | All users |
+| `/skip` / `/back` | Navigate through queue | All users |
+| `/stop` / `/leave` | Stop music and leave voice channel | All users |
+| `/queue` | View current music queue | All users |
+| `/volume [0-100]` | Adjust music volume | All users |
+| `/shuffle` | Shuffle the current queue | All users |
+| `/loop [mode]` | Set loop mode (off/track/queue) | All users |
+| `/nowplaying` | Show currently playing track | All users |
+| `/search [query]` | Search for music across platforms | All users |
+| `/quality` | Manage audio quality settings | Manager |
+| `/audiostats` | Show audio performance metrics | All users |
 
-### ⭐ **Leveling System**
-- `/rank @user` - View rank card with XP progress bars and server ranking
-- `/top` - Display leaderboard by text, voice, or total XP
-- `/setxp @user` - **[Admin]** Set a user's text or voice XP
-- `/setlevel @user` - **[Admin]** Set a user's text or voice level
-- `/lvlreset @user` - **[Admin]** Reset a user's levels and XP data
-- `/lvlconfig` - **[Admin]** Configure XP rates, cooldowns, and server settings
-- `/testxp @user` - **[Admin]** Test XP system by manually awarding XP
-- `/testvoice @user` - **[Admin]** Test voice XP by simulating voice time
-- `/debugxp @user` - **[Admin]** Debug XP system status for a user
+**Features:**
+- **Multi-Platform**: YouTube, Spotify, SoundCloud, Apple Music support
+- **High-Quality Audio**: Configurable quality presets
+- **Smart Queue**: Playlist support with shuffle and loop modes
+- **Performance Metrics**: Real-time audio statistics
 
-### 📊 **Invite Tracking**
-- `/topinvite` - Show the top 10 inviters in the server
-- `/showinvites @user` - Show detailed invite statistics for a user
-- `/resetinvites` - **[Admin]** Reset all invite data with confirmation
-- `/editinvites @user` - **[Admin]** Edit a user's invite statistics
-- `/invw @user add/remove` - **[Admin]** Manage invite admin whitelist
-- `/invitesync` - **[Admin]** Manually sync invite data
-- `/invitestats` - **[Admin]** Show comprehensive server invite statistics
-- `/invitereset` - **[Admin]** Reset invite tracking tables (deletes all data)
+### Server Utilities & Moderation
 
-### 🎵 **Music System (Vocard)**
-- `/play [song]` - Play music from YouTube, Spotify, SoundCloud, and more
-- `/pause` / `/resume` - Pause or resume the current track
-- `/skip` / `/back` - Skip to next track or go back to previous
-- `/stop` / `/leave` - Stop music and leave voice channel
-- `/queue` - View the current music queue with detailed information
-- `/volume [0-100]` - Adjust the music volume
-- `/shuffle` - Shuffle the current queue
-- `/loop [mode]` - Set loop mode (off/track/queue)
-- `/nowplaying` - Show currently playing track with controls
-- `/search [query]` - Search for music across platforms
-- `/connect [channel]` - Connect to a specific voice channel
-- `/lyrics [title]` - Get lyrics for the current or specified song
+| Command | Description | Permissions |
+|---------|-------------|-------------|
+| `/profile @user` | View customizable personal profile card | All users |
+| `/user @user` | Show user information (ID, join date, etc.) | All users |
+| `/avatar @user` | Get user's avatar image | All users |
+| `/server` | Show detailed server information | All users |
+| `/roles` | List all server roles and member counts | All users |
+| `/moveme [channel/user]` | Move yourself to another voice channel | All users |
+| `/ban @user [reason]` | Ban member from server | Admin |
+| `/kick @user [reason]` | Kick member from server | Admin |
+| `/purge [number] @user` | Clean up channel messages | Staff |
 
-### 🎛️ **Audio Quality Management**
-- `/quality` - Manage audio quality settings and presets (**[Manager]** required for changes)
-- `/audiostats` - Show detailed audio statistics and performance metrics
+### Fun & Games Commands
 
-### 🔧 **Server Utilities**
-- `/moveme [channel/user]` - Move yourself to another voice channel
-- `/profile @user` - View customizable personal profile card
-- `/user @user` - Show user information (ID, join date, account age, etc.)
-- `/avatar @user` - Get a user's avatar image in full resolution
-- `/server` - Show detailed server information and statistics
-- `/roles` - Get a list of all server roles and member counts (paginated)
-- `/ban @user [reason]` - **[Admin]** Ban a member from the server
-- `/kick @user [reason]` - **[Admin]** Kick a member from the server
-- `/purge [number] @user` - **[Staff]** Clean up channel messages with filters
+| Command | Description | Permissions |
+|---------|-------------|-------------|
+| `/quack` | Get a random duck image 🦆 | All users |
+| `/meme` | Get a random meme with metadata 😂 | All users |
+| `/coinflip` | Flip a coin with actual coin images 🪙 | All users |
+| `/diceroll [1-100]` | Roll dice with visual results | All users |
+| `/help` | Show paginated help system | All users |
 
-### 🎮 **Fun & Games**
-- `/quack` - Get a random high-quality duck image 🦆
-- `/diceroll [1-100]` - Roll dice with visual results and statistics
-- `/help` - Show comprehensive help information with all commands
+**Features:**
+- **Visual Results**: Coinflip shows actual coin images from collection
+- **NSFW Filtering**: Memes are automatically filtered for family-friendly content
+- **Rich Metadata**: Meme information includes upvotes, subreddit, and original post
+- **Random Variety**: Fresh content every time
 
-### 🛠️ **Admin & System**
-- `/fixdb` - **[Admin]** Fix database schema issues and perform maintenance
-- `/testpersistence` - **[Admin]** Test the persistence system for interactive views
-- `/multidimensionaltravel` - **[Owner]** Get single-use invites to all bot servers
-- `/gigaop` - **[Owner]** Grant temporary admin permissions for debugging
+### Admin & System Commands
 
-## 🔑 Permission System
+| Command | Description | Permissions |
+|---------|-------------|-------------|
+| `/msg #channel` | Send your next message to any channel | Admin |
+| `/fixdb` | Fix database schema issues | Admin |
+| `/testpersistence` | Test the persistence system | Admin |
+| `/multidimensionaltravel` | Get invites to all bot servers | Owner |
+| `/gigaop` | Grant admin permissions for debugging | Owner |
 
-- **[Owner]** - Bot owner only
+**Features:**
+- **Multi-line Messages**: `/msg` supports attachments and multi-line content
+- **Mention Support**: Enables @everyone, @here, and role pings
+- **Database Repair**: Automatic schema updates and corruption fixes
+
+## 🔑 Permission Levels
+
+- **[Owner]** - Bot owner only (ID: 699995264550961193)
 - **[Admin]** - Requires Administrator permission
-- **[Staff]** - Requires Manage Messages permission
+- **[Staff]** - Requires Manage Messages permission  
 - **[Manager]** - Requires Manage Server permission
-- **Whitelisted** - Users added to specific command whitelists
-- **Everyone** - Available to all server members
+- **No tag** - Available to all users (some commands may require whitelist)
 
-## 🛠️ Technical Details
+## 📁 Project Structure
 
-> **⚡ Performance Highlight:** All task commands now load in 2-5 seconds (previously 60+ seconds) thanks to parallel API calls and smart caching!
-
-### **Database Features:**
-- SQLite database with automatic backups every 6 hours
-- Persistent view storage for button interactions
-- Automatic schema migration and error recovery
-- Task scheduling and reminder system (7d, 3d, 1d notifications)
-- Leveling data with anti-spam protection
-- Comprehensive invite tracking with analytics
-
-### **Interactive System:**
-- Custom ticket creation with dynamic questions
-- Role management with add/remove actions
-- Multi-button support with different styles (primary, secondary, success, danger)
-- Persistent across bot restarts
-- @everyone/@here ping support in embeds
-
-### **Performance Optimizations:**
-- **⚡ Parallel API calls** - Task commands load in 2-5 seconds (previously 60+ seconds)
-- **Smart caching** - User data fetched concurrently for maximum speed
-- **Efficient database queries** - Optimized for large datasets
-- **Background processing** - Non-blocking operations for better responsiveness
-- **Memory optimization** - Efficient data structures for high-performance operation
-
-### **Advanced Formatting:**
-- Pagination for large lists (5-25 items per page depending on content)
-- Visual dice display with proper spacing and statistics
-- Beautiful rank cards with progress bars and level information
-- Multi-line layouts for better readability
-- Rich embeds with proper field organization
-
-### **Leveling System Features:**
-- **Dual XP tracking** - Separate text and voice XP systems
-- **Anti-spam protection** - Cooldown-based XP gain (configurable)
-- **Anti-AFK protection** - Smart voice time tracking
-- **Real-time updates** - Live voice time calculation
-- **Role rewards** - Automatic role assignment for level milestones
-- **Configurable rates** - Customizable XP rates and cooldowns
-
-### **Music System Features:**
-- **Multi-platform support** - YouTube, Spotify, SoundCloud, Apple Music, and more
-- **High-quality audio** - Configurable quality presets (Ultra High, High, Balanced, Performance)
-- **Advanced controls** - Full music control suite with queue management
-- **Performance monitoring** - Real-time audio statistics and metrics
-- **Request channels** - Seamless music requests in designated channels
-
-## 🚀 Deployment Options
-
-### **Replit (Recommended for beginners):**
-1. Create new Replit project
-2. Upload bot files
-3. Add `TOKEN` to Secrets
-4. Use UptimeRobot for 24/7 uptime
-
-### **VPS/Cloud Hosting:**
-1. Install Python 3.8+ and required dependencies
-2. Install dependencies: `pip install -r requirements.txt`
-3. Set environment variable: `export TOKEN=your_token_here`
-4. Run: `python main.py`
-5. Use process manager (PM2, systemd) for 24/7 operation
-
-### **Docker:**
-```dockerfile
-FROM python:3.9-slim
-COPY . /app
-WORKDIR /app
-RUN pip install -r requirements.txt
-CMD ["python", "main.py"]
+```
+PuddlesBot2/
+├── main.py                 # Main bot file
+├── tasks.py               # Task management system
+├── lvl.py                 # Leveling system
+├── inviter.py             # Invite tracking
+├── intmsg.py              # Interactive messages
+├── ticket_system.py       # Ticket management
+├── fun.py                 # Fun commands
+├── msg.py                 # Admin messaging
+├── dice.py                # Dice rolling
+├── help.py                # Help system
+├── database.py            # Database management
+├── utils.py               # Utility functions
+├── requirements.txt       # Python dependencies
+├── MusicSystem/           # Music bot integration
+│   ├── main.py           # Music system entry point
+│   ├── cogs/             # Music command cogs
+│   ├── views/            # Music UI components
+│   ├── voicelink/        # Voice connection handler
+│   └── settings.json     # Music system configuration
+└── data/                 # Database and logs
+    ├── data.db    # SQLite database
+    └── logs/             # Log files
 ```
 
-### **Required Permissions:**
-- Send Messages
-- Use Slash Commands
-- Embed Links
-- Attach Files
-- Read Message History
-- Manage Messages (for purge command)
-- Manage Roles (for role buttons)
-- Connect & Speak (for music features)
-- Administrator (recommended for full functionality)
+## 🗄️ Database Schema
 
-## 📊 Usage Examples
+The bot uses SQLite with SQLAlchemy ORM for data persistence:
 
-### **Creating a Complete Support System:**
-1. Run `/intmsg` to create an interactive message
-2. Set title: "Support Center" with detailed description
-3. Add ticket button with custom support questions
-4. Set staff roles for ticket visibility
-5. Monitor activity with `/ticketstats`
+- **Tasks**: Multi-assignee task management with snipe tracking
+- **UserXP**: Dual XP system (text/voice) with timestamps
+- **InviteData**: Comprehensive invite tracking and analytics
+- **InteractiveMessages**: Persistent button and embed storage
+- **TicketData**: Support ticket management and statistics
+- **Settings**: Per-server configuration and preferences
 
-### **Setting Up Task Management:**
-1. Whitelist task creators with `/tcw @user add`
-2. Create tasks with detailed information using `/task`
-3. Track personal progress with `/mytasks`
-4. Review all tasks with `/alltasks` ⚡ **Loads in 2-5 seconds!**
-5. View completion history with `/oldtasks @user`
+## 🔄 Updates & Maintenance
 
-### **Configuring the Leveling System:**
-1. Configure settings: `/lvlconfig`
-2. Set XP rates and cooldowns
-3. Add role rewards for level milestones
-4. Test the system: `/testxp @user`
-5. Monitor progress: `/rank @user` and `/top`
+### Database Migrations
 
-### **Managing Server Growth:**
-1. View top inviters: `/topinvite`
-2. Check specific user stats: `/showinvites @user`
-3. Monitor server analytics: `/invitestats`
-4. Sync invite data: `/invitesync`
+The bot automatically handles database schema updates:
 
-### **Optimizing Music Experience:**
-1. Check audio quality: `/quality status`
-2. View available presets: `/quality preset`
-3. Apply optimal preset: `/quality preset high`
-4. Monitor performance: `/audiostats`
-5. Set up request channels for seamless operation
+```python
+# Automatic migration on startup
+migrate_database()  # Adds missing columns and tables
+```
 
-### **Server Management & Utilities:**
-1. Get server overview: `/server`
-2. View all roles: `/roles`
-3. Check user information: `/user @member`
-4. Moderate efficiently: `/purge 50` or `/ban @user reason`
-5. Help users navigate: `/moveme [channel]`
+### Manual Database Repair
 
-## 🔗 APIs & Credits
+If needed, use `/fixdb` command to repair corrupted tables or force schema updates.
 
-- **Duck Images:** [random-d.uk](https://random-d.uk/) - High-quality duck image API
-- **Discord Integration:** [discord.py](https://discordpy.readthedocs.io/) - Advanced Discord API wrapper
-- **Database:** SQLAlchemy with SQLite - Reliable data persistence
-- **Music System:** Vocard - Advanced multi-platform music streaming
-- **Audio Quality:** Custom audio management system
+## 💝 Credits & Acknowledgments
 
-## 🆘 Support & Troubleshooting
+### 🎵 Music System
+- **[Vocard](https://github.com/ChocoMeow/Vocard)** - Advanced music bot framework providing multi-platform music streaming and high-quality audio processing
+- **[Lavalink](https://github.com/lavalink-devs/Lavalink)** - Audio delivery node for efficient audio streaming and load balancing
 
-### **Common Issues:**
-- **Buttons not working after restart:** Use `/testpersistence` to reload all interactive views
-- **Database errors:** Run `/fixdb` to fix schema issues and perform maintenance
-- **Permission errors:** Check role permissions and command whitelists
-- **Commands not syncing:** Wait 1-2 minutes after bot restart for Discord sync maybe even restart Discord with CTRL+R
-- **Slow task loading:** Upgraded! All task commands now load in 2-5 seconds ⚡
-- **Music not playing:** Check voice permissions and audio quality settings
-- **XP not tracking:** Verify leveling system configuration with `/lvlconfig`
+### 🎮 Fun Commands APIs
+- **[Meme API by D3vd](https://github.com/D3vd/Meme_Api)** - Provides fresh meme content from Reddit with metadata, NSFW filtering, and quality control
+- **[Random Duck API](https://random-d.uk/)** - Delivers high-quality duck photography for instant mood boosters 🦆
 
-### **Performance Tips:**
-- Use `/audiostats` to monitor music performance
-- Regular database maintenance with `/fixdb`
-- Monitor server resources for optimal operation
-- Configure appropriate XP cooldowns to prevent spam
-- Use pagination features for large datasets
+### 🪙 Visual Assets
+- **Coin Images** - Sourced from various online sources. We do not claim ownership of these images. If you own any of the coin images and would like them removed, please contact us and we will remove them immediately.
 
-### **Getting Help:**
-- Use `/help` for comprehensive command information
-- Check console logs for detailed error messages
-- Ensure bot has proper permissions in your server
-- Verify environment variables are set correctly
-- Contact the bot developers for advanced support
+### 🏎️ Special Thanks
+- **[EcoEngine](https://ecoengine.net/)** - For supporting the Mallard Motorsports team and its projects. Thank you for enabling continued development and innovation, and for believing in our mission! 🚀
 
----
+### 💻 Development & Community
+- **Discord.py** - Python Discord API wrapper that makes Discord bot development possible
+- **SQLAlchemy** - Powerful database ORM framework for data persistence
+- **Our amazing community** - Beta testers and feedback providers who help make the bot better
+- **Open source contributors** - Making everything possible through shared knowledge and collaboration
 
-**Made with ❤️ for Discord communities!** 
+## 🤝 Contributing
 
-*⚡ **Performance optimized** - Now featuring 30+ commands with lightning-fast response times!*
+We welcome contributions! Please feel free to:
 
-*🎵 **Music enhanced** - High-quality multi-platform streaming with advanced controls!*
+1. **Report Issues**: Found a bug? Let us know!
+2. **Suggest Features**: Have ideas for improvements?
+3. **Submit Pull Requests**: Help us make the bot better
+4. **Improve Documentation**: Help others understand how to use the bot
 
-*⭐ **Leveling powered** - Dual XP system with beautiful rank cards and leaderboards!*
+## 📞 Support
+https://discord.gg/PGjXDgu36s
 
-*Report issues or suggest features by contacting the bot developers.*

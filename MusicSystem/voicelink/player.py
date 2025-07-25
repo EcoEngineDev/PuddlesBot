@@ -438,9 +438,22 @@ class Player(VoiceProtocol):
             try:
                 await self.play(track, start=track.position)
             except Exception as e:
-                self._logger.error(f"Something went wrong while playing music in {self.guild.name}({self.guild.id})", exc_info=e)
-                await sleep(5)
-                return await self.do_next()
+                error_msg = str(e)
+                if "semaphore timeout" in error_msg.lower() or "clientoserror" in error_msg.lower():
+                    self._logger.warning(f"Network timeout while playing in {self.guild.name}({self.guild.id}), retrying...")
+                    await sleep(3)
+                    # Try to reconnect if the connection seems lost
+                    try:
+                        if not self._node._available:
+                            await self._node.connect()
+                        return await self.do_next()
+                    except:
+                        self._logger.error(f"Failed to recover from network timeout in {self.guild.name}({self.guild.id})")
+                        return
+                else:
+                    self._logger.error(f"Something went wrong while playing music in {self.guild.name}({self.guild.id})", exc_info=e)
+                    await sleep(5)
+                    return await self.do_next()
 
             if not track.requester.bot:
                 self._bot.loop.create_task(func.update_user(track.requester.id, {

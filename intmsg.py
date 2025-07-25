@@ -634,28 +634,43 @@ async def add_buttons_to_existing_message(message, conversation, button_type):
 
 def process_description_emojis(description_text, guild):
     """
-    Process custom emoji names in description text and convert them to proper Discord emoji format.
-    This handles emojis in message descriptions like :punder: -> <:punder:123456789>
+    Process custom emoji in description text to clean, readable format.
+    Converts <:name:id> or <a:name:id> to :name: format for cleaner display.
+    Also handles :emoji_name: patterns and converts them to proper Discord emoji if found in guild.
     """
     if not description_text or not guild:
         return description_text
     
-    # Find all :emoji_name: patterns in the description
     import re
+    
+    # Convert custom emoji format <:name:id> or <a:name:id> to clean :name: format
+    def clean_custom_emoji(match):
+        """Convert <:name:id> or <a:name:id> to :name:"""
+        emoji_name = match.group(2)  # Extract the name part
+        return f":{emoji_name}:"
+    
+    # First, convert any pasted custom emoji to clean format
+    custom_emoji_pattern = r'<(a?):([a-zA-Z0-9_]+):(\d+)>'
+    processed_text = re.sub(custom_emoji_pattern, clean_custom_emoji, description_text)
+    
+    # Now process :emoji_name: patterns - convert to actual Discord emoji if found in guild
     emoji_pattern = r':([a-zA-Z0-9_]+):'
     
-    def replace_emoji(match):
+    def replace_emoji_if_exists(match):
         emoji_name = match.group(1)
         
         # Search for the emoji in the guild
         for emoji in guild.emojis:
             if emoji.name.lower() == emoji_name.lower():
-                return str(emoji)  # This returns <:name:id> format
+                return str(emoji)  # This returns <:name:id> format for actual rendering
         
-        # If not found, return the original text
+        # If not found in guild, keep as clean :name: format
         return match.group(0)
     
-    return re.sub(emoji_pattern, replace_emoji, description_text)
+    # Process :emoji_name: patterns
+    processed_text = re.sub(emoji_pattern, replace_emoji_if_exists, processed_text)
+    
+    return processed_text
 
 # UI Classes
 class EditIntMsgView(discord.ui.View):

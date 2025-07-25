@@ -198,10 +198,15 @@ class Node:
                 if msg.type == aiohttp.WSMsgType.CLOSED:
                     self._available = False
                     self._logger.warning(f"WebSocket closed for node [{self._identifier}]")
+                    # Clean up players when connection is lost
+                    await self._cleanup_players()
                     break
 
                 elif msg.type == aiohttp.WSMsgType.ERROR:
+                    self._available = False
                     self._logger.error(f"WebSocket error for node [{self._identifier}]")
+                    # Clean up players when connection error occurs
+                    await self._cleanup_players()
                     break
                 
                 self._bot.loop.create_task(self._handle_payload(msg.json()))
@@ -209,21 +214,40 @@ class Node:
             except aiohttp.ClientConnectionError as e:
                 self._logger.error(f"Connection error: {e}")
                 self._available = False
+                await self._cleanup_players()
                 break
             
             except Exception as e:
                 self._logger.exception(f"Unexpected error: {e}")
                 self._available = False
+                await self._cleanup_players()
                 break
 
-        while not self._available:
-            retry = backoff.delay()
-            self._logger.info(f"Trying to reconnect node [{self._identifier}] in {round(retry)}s")
-            await asyncio.sleep(retry)
+        # Only attempt reconnection if the node pool still contains this node
+        if self._identifier in self._pool._nodes:
+            while not self._available:
+                retry = backoff.delay()
+                self._logger.info(f"Trying to reconnect node [{self._identifier}] in {round(retry)}s")
+                await asyncio.sleep(retry)
+                try:
+                    await self.connect()
+                except Exception as e:
+                    self._logger.error(f"Reconnection failed: {e}")
+                    
+    async def _cleanup_players(self):
+        """Clean up all players when node disconnects"""
+        if not self._players:
+            return
+            
+        self._logger.info(f"Cleaning up {len(self._players)} players for node [{self._identifier}]")
+        for player in list(self._players.values()):
             try:
-                await self.connect()
+                await player.teardown()
             except Exception as e:
-                self._logger.error(f"Reconnection failed: {e}")
+                self._logger.error(f"Error cleaning up player: {e}")
+        
+        # Clear the players dict to prevent stale references
+        self._players.clear()
 
     async def _handle_payload(self, data: dict) -> None:
         op = data.get("op", None)
@@ -251,19 +275,37 @@ class Node:
             raise NodeNotAvailable(f"The node '{self._identifier}' is unavailable.")
         
         uri: str = f"{self._rest_uri}/{NODE_VERSION}/{query}"
-        async with self._session.request(
-            method=method.value,
-            url=uri,
-            headers={"Authorization": self._password},
-            json=data
-        ) as resp:
-            if resp.status >= 300:
-                raise NodeException(f"Getting errors from Lavalink REST api")
-            
-            if method == RequestMethod.DELETE:
-                return await resp.json(content_type=None)
+        
+        # Add timeout and retry logic for network issues
+        for attempt in range(3):
+            try:
+                timeout = aiohttp.ClientTimeout(total=30, connect=10)
+                async with self._session.request(
+                    method=method.value,
+                    url=uri,
+                    headers={"Authorization": self._password},
+                    json=data,
+                    timeout=timeout
+                ) as resp:
+                    if resp.status >= 300:
+                        raise NodeException(f"Getting errors from Lavalink REST api")
+                    
+                    if method == RequestMethod.DELETE:
+                        return await resp.json(content_type=None)
 
-            return await resp.json()
+                    return await resp.json()
+                    
+            except (aiohttp.ClientOSError, aiohttp.ClientConnectorError, asyncio.TimeoutError) as e:
+                if attempt == 2:  # Last attempt
+                    self._logger.error(f"Network error after 3 attempts: {e}")
+                    self._available = False
+                    raise NodeException(f"Network error communicating with node: {e}")
+                else:
+                    self._logger.warning(f"Network error (attempt {attempt + 1}/3): {e}, retrying...")
+                    await asyncio.sleep(1)
+            except Exception as e:
+                self._logger.error(f"Unexpected error in node communication: {e}")
+                raise
 
     async def connect(self) -> Node:
         """Initiates a connection with a Lavalink node and adds it to the node pool."""
@@ -472,7 +514,7 @@ class NodePool:
         """
 
         available_nodes = { node
-            for _, node in cls._nodes.items() if node.is_connected
+            for _, node in cls._nodes.items() if node.is_connected and node._available
         }
 
         if identifier:

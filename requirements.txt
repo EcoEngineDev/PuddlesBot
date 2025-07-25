@@ -11,4 +11,5 @@ humanize==4.0.0
 beautifulsoup4==4.11.1
 psutil==5.9.8
 aiohttp==3.11.12
-python-dotenv==1.0.1 
+python-dotenv==1.0.1
+pytz==2024.2 

@@ -4,9 +4,9 @@ from discord.ext import commands
 import requests
 import os
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dateutil import parser
-from database import Task, TaskCreator, get_session, TaskReminder
+from database import Task, TaskCreator, get_session, TaskReminder, TimezoneSettings
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from typing import Optional, Callable, Any
@@ -515,6 +515,8 @@ class PuddlesBot(commands.Bot):
             try:
                 lvl.setup_leveling_system(self)
                 lvl.setup_level_commands(self.tree)
+                # Start voice XP tracking
+                lvl.voice_tracker.start_periodic_updates()
                 print("✅ Leveling system loaded")
             except Exception as e:
                 print(f"⚠️ Leveling system failed: {e}")
@@ -533,6 +535,14 @@ class PuddlesBot(commands.Bot):
                 print("✅ Utils loaded")
             except Exception as e:
                 print(f"⚠️ Utils failed: {e}")
+                
+            # Setup message system
+            try:
+                import msg
+                msg.setup_msg_commands(self.tree)
+                print("✅ Message system loaded")
+            except Exception as e:
+                print(f"⚠️ Message system failed: {e}")
                 
             # Add owner commands
             try:
@@ -560,6 +570,14 @@ class PuddlesBot(commands.Bot):
             self.scheduler.add_job(self.rotate_activity, 'interval', minutes=10)
             self.scheduler.add_job(self.connection_monitor, 'interval', minutes=1)
             self.scheduler.add_job(self.log_health_stats, 'interval', minutes=15)
+            
+            # Sync slash commands
+            logger.info("Syncing slash commands...")
+            try:
+                synced = await self.tree.sync()
+                logger.info(f"Synced {len(synced)} command(s)")
+            except Exception as e:
+                logger.error(f"Failed to sync commands: {e}")
             
             logger.info("Bot setup completed successfully!")
             
@@ -730,6 +748,11 @@ class PuddlesBot(commands.Bot):
             
             print("Owner commands: /multidimensionaltravel")
             print("🌟 All systems ready! Bot is fully operational.")
+            
+            # Mark database startup as complete to enable full database operations
+            from database import mark_startup_complete
+            mark_startup_complete()
+            
         else:
             print("🔄 Bot reconnected successfully!")
             
@@ -739,7 +762,8 @@ class PuddlesBot(commands.Bot):
 
     async def check_due_tasks(self):
         from database import TaskReminder
-        now = datetime.utcnow()
+        # Use consistent UTC time handling
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         reminder_days = [(7, '7d'), (3, '3d'), (1, '1d')]
         for guild in self.guilds:
             session = get_session(str(guild.id))
@@ -749,34 +773,46 @@ class PuddlesBot(commands.Bot):
                     Task.completed == False
                 ).all()
                 for task in tasks:
-                    user = await self.fetch_user(int(task.assigned_to))
-                    if not user:
-                        continue
-                    days_until_due = (task.due_date - now).days
-                    for days, label in reminder_days:
-                        # If due in exactly 'days' days (rounded down), and not already reminded
-                        if days_until_due == days:
-                            already_sent = session.query(TaskReminder).filter_by(
-                                task_id=task.id,
-                                user_id=str(task.assigned_to),
-                                reminder_type=label
-                            ).first()
-                            if not already_sent:
-                                embed = discord.Embed(
-                                    title=f"⏰ Task Due in {days} Day{'s' if days > 1 else ''}!",
-                                    description=f"Task: {task.name}\nDue Date: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\n\nDescription:\n{task.description}",
-                                    color=discord.Color.orange() if days > 1 else discord.Color.red()
-                                )
-                                try:
-                                    await user.send(embed=embed)
-                                except discord.Forbidden:
-                                    pass
-                                reminder = TaskReminder(
-                                    task_id=task.id,
-                                    user_id=str(task.assigned_to),
-                                    reminder_type=label
-                                )
-                                session.add(reminder)
+                    # Handle multiple assignees
+                    assigned_user_ids = task.assigned_to.split(',') if task.assigned_to else []
+                    for user_id_str in assigned_user_ids:
+                        user_id_str = user_id_str.strip()  # Remove any whitespace
+                        if not user_id_str:  # Skip empty strings
+                            continue
+                            
+                        try:
+                            user = await self.fetch_user(int(user_id_str))
+                            if not user:
+                                continue
+                                
+                            days_until_due = (task.due_date - now).days
+                            for days, label in reminder_days:
+                                # If due in exactly 'days' days (rounded down), and not already reminded
+                                if days_until_due == days:
+                                    already_sent = session.query(TaskReminder).filter_by(
+                                        task_id=task.id,
+                                        user_id=user_id_str,
+                                        reminder_type=label
+                                    ).first()
+                                    if not already_sent:
+                                        embed = discord.Embed(
+                                            title=f"⏰ Task Due in {days} Day{'s' if days > 1 else ''}!",
+                                            description=f"Task: {task.name}\nDue Date: {task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\n\nDescription:\n{task.description}",
+                                            color=discord.Color.orange() if days > 1 else discord.Color.red()
+                                        )
+                                        try:
+                                            await user.send(embed=embed)
+                                        except discord.Forbidden:
+                                            pass
+                                        reminder = TaskReminder(
+                                            task_id=task.id,
+                                            user_id=user_id_str,
+                                            reminder_type=label
+                                        )
+                                        session.add(reminder)
+                        except (ValueError, discord.NotFound, discord.HTTPException):
+                            # Skip invalid user IDs or users that can't be fetched
+                            continue
                 session.commit()
             finally:
                 session.close()
@@ -803,6 +839,13 @@ class PuddlesBot(commands.Bot):
         """Clean shutdown of the bot"""
         try:
             logger.info("Starting bot shutdown sequence...")
+            
+            # Stop voice XP tracking
+            try:
+                lvl.voice_tracker.stop_periodic_updates()
+                logger.info("Voice XP tracking stopped")
+            except Exception as e:
+                logger.error(f"Error stopping voice XP tracking: {e}")
             
             # Stop the scheduler
             if hasattr(self, 'scheduler') and self.scheduler.running:
