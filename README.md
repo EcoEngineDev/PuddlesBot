@@ -1,13 +1,19 @@
 # Puddles Bot 2.1
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Discord.py](https://img.shields.io/badge/discord.py-2.0+-blue.svg)](https://github.com/Rapptz/discord.py)
+[![HCB](https://img.shields.io/badge/SPONSOR%20US-red.svg)](https://hcb.hackclub.com/donations/start/ecoengine)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## Add Puddles to Your Server:
-https://discord.com/oauth2/authorize?client_id=1388695231578509352&permissions=8&integration_type=0&scope=bot
+<p align="center">
+  <a href="https://discord.com/oauth2/authorize?client_id=1388695231578509352&permissions=8&integration_type=0&scope=bot">
+    <img src="https://img.shields.io/badge/INVITE%20TO%20YOUR%20SERVER-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Invite Bot">
+  </a>
+</p>
 
 
-## **PuddlesBot2** is a comprehensive Discord bot featuring task management, leveling systems, music streaming, interactive messages, and much more. Built with modern Discord.py and designed for optimal performance and user experience.
+##
+**PuddlesBot2** is a comprehensive Discord bot featuring task management, leveling systems, music streaming, interactive messages, and much more. Built with modern Discord.py and designed for optimal performance and user experience.
 
 ## ✨ Key Features
 
