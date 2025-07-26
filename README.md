@@ -5,6 +5,10 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## Add Puddles to Your Server:
+
+<div style="text-align:center;">
+  <img src="media/logo.png" alt="Logo" width="300">
+</div>
 <p align="center">
   <a href="https://discord.com/oauth2/authorize?client_id=1388695231578509352&permissions=8&integration_type=0&scope=bot">
     <img src="https://img.shields.io/badge/INVITE%20TO%20YOUR%20SERVER-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Invite Bot">
@@ -102,6 +106,10 @@ MONGODB_NAME=
 - **No Late Penalty**: Sniped tasks won't be marked as late even if approved after due date
 - **Smart Display**: Shows all assignees in task views with clear sniping indicators
 
+<img src="media/ex1.png" alt="Logo" width="300">
+<img src="media/ex2.png" alt="Logo" width="257">
+
+
 ### Interactive Messages & Tickets
 
 | Command | Description | Permissions |
@@ -117,6 +125,9 @@ MONGODB_NAME=
 - **Role Management**: Assign/remove roles with interactive buttons
 - **Persistent**: Buttons work even after bot restarts
 - **Custom Styling**: Full embed customization with colors and content
+
+<img src="media/ex3.png" alt="Logo" width="300">
+<img src="media/ex4.png" alt="Logo" width="286">
 
 ### Leveling System Commands
 
@@ -137,6 +148,8 @@ MONGODB_NAME=
 - **Anti-Spam Protection**: Cooldowns prevent XP farming
 - **Visual Progress**: Beautiful rank cards with progress bars
 - **Server Rankings**: Compare progress with other members
+
+<img src="media/ex5.png" alt="Logo" width="600">
 
 ### Invite Tracking Commands
 
@@ -208,6 +221,9 @@ MONGODB_NAME=
 - **NSFW Filtering**: Memes are automatically filtered for family-friendly content
 - **Rich Metadata**: Meme information includes upvotes, subreddit, and original post
 - **Random Variety**: Fresh content every time
+
+<img src="media/ex6.png" alt="Logo" width="429">
+<img src="media/ex7.png" alt="Logo" width="300">
 
 ### Admin & System Commands
 
