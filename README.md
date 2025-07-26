@@ -6,7 +6,9 @@
 
 ## Add Puddles to Your Server:
 
-<img src="media/logo.png" alt="Logo" width="300" style="display:block; margin-left:auto; margin-right:auto;">
+<div style="text-align:center;">
+  <img src="Media/logo.png" alt="Example 1" width="300" style="display:inline-block; margin-right:10px;">
+</div>
 
 <p align="center">
   <a href="https://discord.com/oauth2/authorize?client_id=1388695231578509352&permissions=8&integration_type=0&scope=bot">
@@ -128,8 +130,8 @@ MONGODB_NAME=
 - **Custom Styling**: Full embed customization with colors and content
 
 <div style="text-align:left;">
-   <img src="Media/ex3.png" alt="Logo" width="300">
-   <img src="Media/ex4.png" alt="Logo" width="286">
+   <img src="Media/ex3.png" alt="Logo" width="300" style="display:inline-block; margin-right:10px;">
+   <img src="Media/ex4.png" alt="Logo" width="286" style="display:inline-block;">
 </div>
 
 ### Leveling System Commands
@@ -226,8 +228,8 @@ MONGODB_NAME=
 - **Random Variety**: Fresh content every time
 
 <div style="text-align:left;">
-   <img src="Media/ex6.png" alt="Logo" width="429">
-   <img src="Media/ex7.png" alt="Logo" width="300">
+   <img src="Media/ex6.png" alt="Logo" width="429" style="display:inline-block; margin-right:10px;">
+   <img src="Media/ex7.png" alt="Logo" width="300" style="display:inline-block;">
 </div>
 
 ### Admin & System Commands
