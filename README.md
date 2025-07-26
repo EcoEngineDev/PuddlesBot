@@ -18,7 +18,7 @@
 
 
 ##
-**PuddlesBot2** is a comprehensive Discord bot featuring task management, leveling systems, music streaming, interactive messages, and much more. Built with modern Discord.py and designed for optimal performance and user experience.
+**PuddlesBot** is a comprehensive Discord bot featuring task management, leveling systems, music streaming, interactive messages, and much more. Built with modern Discord.py and designed for optimal performance and user experience.
 
 ## ✨ Key Features
 
@@ -45,8 +45,8 @@
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/PuddlesBot2.git
-   cd PuddlesBot2
+   git clone https://github.com/EcoEngineDev/PuddlesBot
+   cd PuddlesBot
    ```
 
 2. **Install dependencies**
