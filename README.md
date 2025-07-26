@@ -6,10 +6,9 @@
 
 ## Add Puddles to Your Server:
 
-<div style="text-align:center;">
-  <img src="Media/logo.png" alt="Example 1" width="300" style="display:inline-block; margin-right:10px;">
-</div>
-
+<p align="center">
+  <img width="400" src="Media/logo.png">
+</p>
 <p align="center">
   <a href="https://discord.com/oauth2/authorize?client_id=1388695231578509352&permissions=8&integration_type=0&scope=bot">
     <img src="https://img.shields.io/badge/INVITE%20TO%20YOUR%20SERVER-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Invite Bot">
