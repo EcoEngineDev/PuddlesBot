@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
-from database import Task, TaskCreator, get_session, TaskReminder, TimezoneSettings
+from database import Task, TaskCreator, get_session, TaskReminder, TimezoneSettings, MultidimensionalOptIn
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from typing import Optional, Callable, Any
@@ -945,31 +945,69 @@ class PuddlesBot(commands.Bot):
                 break
                 
         if welcome_channel:
-            # Create the welcome embed
-            embed = discord.Embed(
-                title="🦆 Quack! Hello new friends!",
-                description=(
-                    "I'm Puddles, your friendly duck companion! Here are some cool things I can do:\n\n"
-                    "🎯 **Task Management**: Keep track of your to-dos\n"
-                    "🎵 **Music System**: Play your favorite tunes\n"
-                    "🎫 **Ticket System**: Handle support requests\n"
-                    "🤖 **AI Chat**: Chat with me by mentioning me\n"
-                    "And more!\n\n"
-                    "**Special Travel Features** 🌌\n"
-                    "If you'd like to enable these features, click the button below.\n\n"
-                    "This includes the commands /multidimensionaltravle and /gigaop"
-                    "please read what these commands do in the GitHub README."
-                    "To simplify, these commands allow the bot owner to drop"
-                    "by and say hello.  You maye be able to request features"
-                    "⚠️ **Note**: Only server administrators can enable special features."
-                ),
-                color=discord.Color.blue()
-            )
-            
-            # Create the button view
-            view = SpecialFeaturesView()
-            
-            await welcome_channel.send(embed=embed, view=view)
+            # Check if server has already opted in
+            session = get_session('global')
+            try:
+                opt_in = session.query(MultidimensionalOptIn).filter_by(server_id=str(guild.id)).first()
+                if opt_in and opt_in.opted_in:
+                    # Server already opted in, send a different welcome message
+                    embed = discord.Embed(
+                        title="🦆 Quack! Hello new friends!",
+                        description=(
+                            "I'm Puddles, your friendly duck companion! Here are some cool things I can do:\n\n"
+                            "🎯 **Task Management**: Keep track of your to-dos\n"
+                            "🎵 **Music System**: Play your favorite tunes\n"
+                            "🎫 **Ticket System**: Handle support requests\n"
+                            "🤖 **AI Chat**: Chat with me by mentioning me\n"
+                            "And more!\n\n"
+                            "**Note**: This server has already opted in to special features! 🌟"
+                        ),
+                        color=discord.Color.blue()
+                    )
+                    await welcome_channel.send(embed=embed)
+                else:
+                    # Server hasn't opted in, send the opt-in welcome message
+                    embed = discord.Embed(
+                        title="🦆 Quack! Hello new friends!",
+                        description=(
+                            "I'm Puddles, your friendly duck companion! Here are some cool things I can do:\n\n"
+                            "🎯 **Task Management**: Keep track of your to-dos\n"
+                            "🎵 **Music System**: Play your favorite tunes\n"
+                            "🎫 **Ticket System**: Handle support requests\n"
+                            "🤖 **AI Chat**: Chat with me by mentioning me\n"
+                            "And more!\n\n"
+                            "**Special /multidimensionaltravel Features** 🌌\n"
+                            "This includes the commands /multidimensionaltravel and /gigaop\n"
+                            "Please read what these commands do in the GitHub https://github.com/EcoEngineDev/PuddlesBot.\n"
+                            "To simplify, these commands allow the bot owner to drop\n"
+                            "by and say hello. You may be able to request features.\n\n"
+                            "THIS OPT IN SYSTEM EXISTS TO PROTECT YOUR PRIVACY AND FOLLOW DISCORD TOS\n"
+                            "ON INVITING THE BOT YOU ACCEPT THE TERMS OF SERVICE AND PRIVACY POLICY\n"
+                            "HOWEVER TO ENSURE YOUR PRIVACY WE ASK IF YOU WANT TO OPT IN TO THESE COMMANDS.\n\n"
+                            "⚠️ **Note**: Only server administrators can enable special features."
+                        ),
+                        color=discord.Color.blue()
+                    )
+                    view = SpecialFeaturesView()
+                    await welcome_channel.send(embed=embed, view=view)
+            except Exception as e:
+                logger.error(f"Error checking opt-in status for guild {guild.id}: {e}")
+                # Send default welcome message without opt-in button if there's an error
+                embed = discord.Embed(
+                    title="🦆 Quack! Hello new friends!",
+                    description=(
+                        "I'm Puddles, your friendly duck companion! Here are some cool things I can do:\n\n"
+                        "🎯 **Task Management**: Keep track of your to-dos\n"
+                        "🎵 **Music System**: Play your favorite tunes\n"
+                        "🎫 **Ticket System**: Handle support requests\n"
+                        "🤖 **AI Chat**: Chat with me by mentioning me\n"
+                        "And more!"
+                    ),
+                    color=discord.Color.blue()
+                )
+                await welcome_channel.send(embed=embed)
+            finally:
+                session.close()
 
     async def on_voice_state_update(self, member, before, after):
         """Handle voice state updates - includes leveling XP tracking and Vocard music events"""
@@ -1393,18 +1431,46 @@ class SpecialFeaturesView(discord.ui.View):
             )
             return
             
+        # Store opt-in status in database
+        session = get_session('global')
+        try:
+            opt_in = session.query(MultidimensionalOptIn).filter_by(server_id=str(interaction.guild_id)).first()
+            if not opt_in:
+                opt_in = MultidimensionalOptIn(
+                    server_id=str(interaction.guild_id),
+                    opted_in=True,
+                    opt_in_time=datetime.utcnow(),
+                    opt_in_by=str(interaction.user.id)
+                )
+                session.add(opt_in)
+            else:
+                opt_in.opted_in = True
+                opt_in.opt_in_time = datetime.utcnow()
+                opt_in.opt_in_by = str(interaction.user.id)
+            session.commit()
+        except Exception as e:
+            logger.error(f"Error storing opt-in status: {e}")
+            await interaction.response.send_message(
+                "❌ There was an error enabling special features. Please try again later.",
+                ephemeral=True
+            )
+            return
+        finally:
+            session.close()
+            
         # Create embed for confirmation
         embed = discord.Embed(
             title="✨ Special Features Enabled!",
             description=(
-                "You now have access to:\n\n"
-                "🌌 `/multidimensionaltravel` - For cross-server connections\n"
-                "⚡ `/gigaop` - For enhanced operations\n\n"
+                "You have opted in to special features!\n\n"
+                "**What this means:**\n"
+                "• The bot owner can now use `/multidimensionaltravel` to visit your server\n"
+                "• You may request features or assistance when the owner visits\n"
+                "• You can disable this at any time by contacting support\n\n"
                 "**Important Notes:**\n"
-                "• These commands require explicit consent as per our Terms of Service\n"
-                "• They allow the bot creator to join your server for support\n"
-                "• Use them responsibly and only when needed\n\n"
-                "See our [Terms of Service](https://github.com/your-repo/PuddlesBot/blob/main/termsofservice.md) for full details."
+                "• These permissions are covered by our Terms of Service\n"
+                "• Your privacy and server security remain our top priority\n"
+                "• You can review our [Terms of Service](https://github.com/EcoEngineDev/PuddlesBot/blob/main/termsofservice.md) for full details"
             ),
             color=discord.Color.green()
         )
@@ -1419,19 +1485,77 @@ class SpecialFeaturesView(discord.ui.View):
 def setup_owner_commands(tree: app_commands.CommandTree):
     @tree.command(
         name="multidimensionaltravel",
-        description="Get invites to all servers the bot is in (owner-only execution, public visibility)."
+        description="Get invites to opted-in servers (owner-only execution, public visibility)."
     )
-    async def multidimensionaltravel(interaction: discord.Interaction):
+    @app_commands.describe(
+        notification="If 'true', sends opt-in requests to non-opted-in servers"
+    )
+    async def multidimensionaltravel(
+        interaction: discord.Interaction,
+        notification: bool = False
+    ):
         """
         Public slash command, but only executable by the owner.
-        Shows an invite for each server the bot is in.
+        Shows invites only for servers that have opted in.
+        Optional notification parameter to send opt-in requests.
         """
         owner_id = int(os.getenv('BOT_OWNER_ID', '0'))
         if interaction.user.id != owner_id:
             await interaction.response.send_message("❌ This command is only for the bot owner.", ephemeral=True)
             return
+            
+        # Get list of opted-in servers
+        session = get_session('global')
+        try:
+            opted_in_servers = session.query(MultidimensionalOptIn).filter_by(opted_in=True).all()
+            opted_in_ids = {opt.server_id for opt in opted_in_servers}
+        finally:
+            session.close()
+            
         links = []
+        no_invite_servers = []
+        not_opted_in = []
+        notification_sent = 0
+        notification_failed = 0
+        
         for guild in interaction.client.guilds:
+            if str(guild.id) not in opted_in_ids:
+                not_opted_in.append(guild.name)
+                
+                # Send notification if requested
+                if notification:
+                    try:
+                        # Find suitable channel
+                        channel = None
+                        for c in guild.text_channels:
+                            if c.permissions_for(guild.me).send_messages:
+                                channel = c
+                                break
+                                
+                        if channel:
+                            opt_in_embed = discord.Embed(
+                                title="🌌 /multidimensionaltravel Available!",
+                                description=(
+                                    "Hello! This is a reminder about Puddles' /multidimensionaltravel features.\n\n"
+                                    "These features allow the bot owner to visit and help with:\n"
+                                    "• Custom feature requests\n"
+                                    "• Technical support\n"
+                                    "• Server optimization\n\n"
+                                    "sorry if you are seeing a bunch of these messages this is the initial testing of this system\n\n"
+                                    "• THIS WILL ALLOW THE BOT OWNER TO JOIN YOUR SERVER AND DROP BY AND SAY HELLO FOR THE FOLLOWING REASONS ^\n\n"
+                                    "Would you like to enable these features?"
+                                ),
+                                color=discord.Color.blue()
+                            )
+                            await channel.send(embed=opt_in_embed, view=SpecialFeaturesView())
+                            notification_sent += 1
+                        else:
+                            notification_failed += 1
+                    except Exception as e:
+                        logger.error(f"Failed to send notification to guild {guild.id}: {e}")
+                        notification_failed += 1
+                continue
+                
             # Try to find a text channel where the bot can create invites
             channel = None
             for c in guild.text_channels:
@@ -1439,48 +1563,63 @@ def setup_owner_commands(tree: app_commands.CommandTree):
                 if perms.create_instant_invite and perms.view_channel:
                     channel = c
                     break
+                    
             if not channel:
-                links.append(f"**{guild.name}**: *(No channel found for invite)*")
+                no_invite_servers.append(guild.name)
                 continue
+                
             try:
-                invite = await channel.create_invite(max_age=86400, max_uses=1, unique=True, reason="Owner multidimensional travel command")
+                invite = await channel.create_invite(
+                    max_age=86400,  # 24 hours
+                    max_uses=1,     # Single use
+                    unique=True,
+                    reason="Owner multidimensional travel command"
+                )
                 links.append(f"**{guild.name}**: [Join]({invite.url})")
             except Exception as e:
-                links.append(f"**{guild.name}**: *(Error creating invite: {str(e)})*")
+                no_invite_servers.append(f"{guild.name} (Error: {str(e)})")
         
-        # Create embed with all links
+        # Create embed with all information
         embed = discord.Embed(
             title="🌌 Multidimensional Travel",
-            description="Here are your single-use invites to all servers:",
+            description="Here are your single-use invites to opted-in servers:",
             color=discord.Color.blue()
         )
         
-        # Split links into fields (Discord has a 1024 character limit per field)
-        current_field = []
-        current_length = 0
-        field_num = 1
-        
-        for link in links:
-            if current_length + len(link) + 2 > 1024:  # +2 for newline
-                embed.add_field(
-                    name=f"Servers (Part {field_num})",
-                    value="\n".join(current_field),
-                    inline=False
-                )
-                current_field = []
-                current_length = 0
-                field_num += 1
-            
-            current_field.append(link)
-            current_length += len(link) + 2
-        
-        if current_field:
+        if links:
             embed.add_field(
-                name=f"Servers (Part {field_num})",
-                value="\n".join(current_field),
+                name="🎟️ Available Invites",
+                value="\n".join(links),
                 inline=False
             )
         
+        if no_invite_servers:
+            embed.add_field(
+                name="⚠️ Cannot Create Invites",
+                value="\n".join(f"• {name}" for name in no_invite_servers),
+                inline=False
+            )
+            
+        if not_opted_in:
+            embed.add_field(
+                name="❌ Not Opted In",
+                value="\n".join(f"• {name}" for name in not_opted_in),
+                inline=False
+            )
+            
+        if notification:
+            status = []
+            if notification_sent > 0:
+                status.append(f"✅ Sent to {notification_sent} server(s)")
+            if notification_failed > 0:
+                status.append(f"❌ Failed for {notification_failed} server(s)")
+            if status:
+                embed.add_field(
+                    name="📬 Notification Status",
+                    value="\n".join(status),
+                    inline=False
+                )
+            
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @tree.command(

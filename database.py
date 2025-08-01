@@ -1,6 +1,6 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Float, Table, MetaData
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 import os
 import sqlalchemy
@@ -178,6 +178,18 @@ class SnipeSettings(Base):
     
     def __repr__(self):
         return f"<SnipeSettings(server_id='{self.server_id}', channel_id='{self.snipe_channel_id}')>"
+
+class MultidimensionalOptIn(Base):
+    """Stores server opt-in status for multidimensional travel feature"""
+    __tablename__ = 'multidimensional_optin'
+    
+    server_id = Column(String, primary_key=True)
+    opted_in = Column(Boolean, default=False)
+    opt_in_time = Column(DateTime, nullable=True)
+    opt_in_by = Column(String, nullable=True)  # Discord ID of admin who opted in
+    
+    def __repr__(self):
+        return f"<MultidimensionalOptIn(server_id='{self.server_id}', opted_in={self.opted_in})>"
 
 def get_db_path(server_id):
     return os.path.join(DATA_DIR, f"{server_id}.db")
