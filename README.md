@@ -1,4 +1,4 @@
-# Puddles Bot 2.1
+# Puddles Bot 2.2
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Discord.py](https://img.shields.io/badge/discord.py-2.0+-blue.svg)](https://github.com/Rapptz/discord.py)
 [![HCB](https://img.shields.io/badge/SPONSOR%20US-red.svg)](https://hcb.hackclub.com/donations/start/ecoengine)
@@ -14,7 +14,9 @@
     <img src="https://img.shields.io/badge/INVITE%20TO%20YOUR%20SERVER-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Invite Bot">
   </a>
 </p>
-
+<p align="center">
+   By Adding Puddles to Your Server You Have Read and Agreed to the Terms of Service, Privacy Policy, and our Disclaimer about AI Generated Content.
+<p>
 
 
 ##
