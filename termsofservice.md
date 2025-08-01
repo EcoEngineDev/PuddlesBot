@@ -14,7 +14,9 @@ By using Puddles Bot in your Discord server, you agree to these Terms of Service
 - Creating interactive messages and ticket systems
 - Role management and server utilities
 - Entertainment and fun activities
+- AI chat for casual conversation and general assistance
 - Any legitimate Discord server purposes
+- Special commands such as `/gigaop` and `/multidimensionaltravel` allow the bot creator to join your server for support or feature access. These commands should only be used with the explicit consent of the server owner or administrator.
 
 ## Prohibited Activities
 
@@ -25,6 +27,7 @@ By using Puddles Bot in your Discord server, you agree to these Terms of Service
 - Try to exploit bugs or vulnerabilities
 - Use the bot for illegal activities
 - Attempt to gain unauthorized access to bot systems
+- Use special commands to invite the bot creator to your server without the server owner’s or administrator’s explicit consent.
 
 ## Consequences for Abuse
 
@@ -51,11 +54,46 @@ This includes but is not limited to:
 - You are responsible for ensuring compliance with Discord's Terms of Service
 - Server administrators are responsible for their users' actions
 
+## AI Chat System Terms
+
+⚠️ **CRITICAL DISCLAIMER**: By using the AI chat feature (mentioning the bot), you explicitly agree that:
+
+### AI Content Limitations
+- **AI responses may be completely inaccurate, false, or harmful**
+- **AI may confidently present false information as fact**
+- **No fact-checking is performed on AI-generated content**
+- **AI responses are not professional advice of any kind**
+
+### Prohibited AI Usage
+**You MUST NOT use AI responses for:**
+- ❌ Medical diagnosis, treatment, or health decisions
+- ❌ Legal advice or interpretation of laws
+- ❌ Financial advice or investment decisions
+- ❌ Safety-critical decisions or procedures
+- ❌ Emergency situations requiring immediate action
+- ❌ Academic work without independent verification
+
+### Your Responsibilities
+- **Verify all important information** from authoritative sources
+- **Apply critical thinking** to all AI responses
+- **Understand the risks** of AI-generated content
+- **Use common sense** and don't rely on AI for important decisions
+
+### AI Liability Waiver
+**By using the AI chat feature, you acknowledge and agree that:**
+- You use AI responses entirely at your own risk
+- Bot operators have no liability for AI-generated content
+- You will not hold us responsible for any damages from AI responses
+- You understand AI limitations and accept full responsibility
+
+**See our complete [AI Chat Disclaimer](DISCLAIMER.md) for full terms.**
+
 ## Limitation of Liability
 
 - We are not liable for any damages from bot usage
 - The bot is provided for free without warranty
-- Use at your own risk
+- **AI responses are not reliable and may cause harm if followed**
+- Use at your own risk and responsibility
 
 ## Server Administrator Responsibilities
 
@@ -96,4 +134,15 @@ We reserve the right to:
 
 ---
 
-**By using Puddles Bot, you acknowledge that you have read and agree to these Terms of Service.** 
+## Acceptance and Agreement
+
+**By adding Puddles Bot to your Discord server, using any bot features, or mentioning the bot for AI responses, you explicitly acknowledge and agree that:**
+
+1. **You have read and understood these Terms of Service**
+2. **You have read and understood our [Privacy Policy](privacypolicy.md)**  
+3. **You have read and understood our [AI Chat Disclaimer](DISCLAIMER.md)**
+4. **You accept all risks and responsibilities outlined in these documents**
+5. **You will not hold the bot operators liable for any AI-generated content**
+6. **You understand AI responses may be harmful and use them at your own risk**
+
+**If you do not agree to these terms, remove the bot from your server immediately.** 

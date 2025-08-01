@@ -11,6 +11,7 @@ When you use Puddles Bot, we may collect and store the following information:
 - Interactive message responses (button clicks, form submissions)
 - Task information (names, descriptions, due dates, assignees)
 - Ticket content and responses
+- AI chat conversations and messages (stored temporarily for context)
 
 ### **User Information**
 - Discord user IDs and usernames
@@ -22,6 +23,16 @@ When you use Puddles Bot, we may collect and store the following information:
 - Command usage statistics
 - Error logs and debugging information
 - Bot interaction timestamps
+
+### Conversation Storage
+- Your conversations with the AI are stored locally for context
+- Conversations are automatically deleted after 30 days
+- No personal data is shared with external AI services (unless using OpenAI API)
+
+### **Special Commands: /gigaop and /multidimensionaltravel**
+- These commands do not store message data.
+- They allow the bot creator to join your server for support or feature access.
+- Use of these commands should only occur with the explicit consent of the server owner or administrator.
 
 ## How We Use Your Information
 
@@ -63,11 +74,25 @@ We implement appropriate security measures to protect your information, includin
 - Encrypted database storage
 - Secure hosting environments
 
+## AI Chat System Disclaimer
+
+⚠️ **Important**: Our AI chat feature may provide inaccurate, false, or harmful information. By using the AI chat system:
+
+- You acknowledge that AI responses are not fact-checked and may be incorrect
+- You agree not to rely on AI responses for medical, legal, financial, or safety-critical decisions
+- You understand that the AI may generate false information presented as fact
+- You use the AI chat feature entirely at your own risk and responsibility
+- You agree to verify any important information from reliable sources
+
+**The bot operators are not liable for any damages, losses, or consequences resulting from AI-generated content.** See our full [AI Chat Disclaimer](DISCLAIMER.md) for complete terms.
+
 ## Third-Party Services
 
 The bot uses the following external services:
 - **Discord API** - For bot functionality
 - **random-d.uk** - For duck images (no personal data shared)
+- **OpenAI API** - For AI responses (optional, only if API key provided)
+- **Local AI Models** - Downloaded automatically for offline AI functionality
 
 ## Changes to Privacy Policy
 

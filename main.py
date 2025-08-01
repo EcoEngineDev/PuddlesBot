@@ -205,6 +205,7 @@ import inviter
 import quality_manager
 import tasks
 import lvl  # Leveling system
+import puddleai  # AI chat system
 from ticket_system import (
     InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal, TicketControlView
@@ -464,6 +465,9 @@ class PuddlesBot(commands.Bot):
         try:
             logger.info("Starting bot setup...")
             
+            # Add persistent view for special features
+            self.add_view(SpecialFeaturesView())
+            
             # Initialize database session
             logger.debug("Initializing database...")
             session = get_session('global')
@@ -550,6 +554,13 @@ class PuddlesBot(commands.Bot):
                 print("✅ Owner commands loaded")
             except Exception as e:
                 print(f"⚠️ Owner commands failed: {e}")
+            
+            # Setup AI Chat system
+            try:
+                puddleai.setup_ai_chat_system(self)
+                print("✅ AI Chat system loaded")
+            except Exception as e:
+                print(f"⚠️ AI Chat system failed: {e}")
             
             # Setup music system
             try:
@@ -924,7 +935,42 @@ class PuddlesBot(commands.Bot):
         """Handle bot joining a new guild"""
         print(f"🎉 Bot joined new guild: {guild.name}")
         await inviter.on_guild_join(guild)
-    
+        
+        # Find the first suitable channel to send the welcome message
+        welcome_channel = None
+        for channel in guild.text_channels:
+            # Check if bot has permission to send messages in this channel
+            if channel.permissions_for(guild.me).send_messages:
+                welcome_channel = channel
+                break
+                
+        if welcome_channel:
+            # Create the welcome embed
+            embed = discord.Embed(
+                title="🦆 Quack! Hello new friends!",
+                description=(
+                    "I'm Puddles, your friendly duck companion! Here are some cool things I can do:\n\n"
+                    "🎯 **Task Management**: Keep track of your to-dos\n"
+                    "🎵 **Music System**: Play your favorite tunes\n"
+                    "🎫 **Ticket System**: Handle support requests\n"
+                    "🤖 **AI Chat**: Chat with me by mentioning me\n"
+                    "And more!\n\n"
+                    "**Special Travel Features** 🌌\n"
+                    "If you'd like to enable these features, click the button below.\n\n"
+                    "This includes the commands /multidimensionaltravle and /gigaop"
+                    "please read what these commands do in the GitHub README."
+                    "To simplify, these commands allow the bot owner to drop"
+                    "by and say hello.  You maye be able to request features"
+                    "⚠️ **Note**: Only server administrators can enable special features."
+                ),
+                color=discord.Color.blue()
+            )
+            
+            # Create the button view
+            view = SpecialFeaturesView()
+            
+            await welcome_channel.send(embed=embed, view=view)
+
     async def on_voice_state_update(self, member, before, after):
         """Handle voice state updates - includes leveling XP tracking and Vocard music events"""
         # Handle leveling voice XP tracking
@@ -1277,13 +1323,8 @@ class PuddlesBot(commands.Bot):
         # Ignore messages from bots or DMs
         if message.author.bot or not message.guild:
             return
-
-        # Check if the bot is directly mentioned (Vocard functionality)
-        if music_func and hasattr(music_func, 'settings') and self.user.id in message.raw_mentions and not message.mention_everyone:
-            prefix = await self.command_prefix(self, message)
-            if not prefix:
-                return await message.channel.send("I don't have a bot prefix set.")
-            await message.channel.send(f"My prefix is `{prefix}`")
+            
+        # Skip the prefix message - it's handled by AI chat system now
 
         # Check for music request channel (Vocard functionality)
         if music_func and hasattr(music_func, 'settings'):
@@ -1321,9 +1362,59 @@ class PuddlesBot(commands.Bot):
             await lvl.handle_message_xp(message)
         except Exception as e:
             print(f"Error in leveling message handling: {e}")
+        
+        # Handle AI chat bot mentions
+        try:
+            handled = await puddleai.handle_bot_mention(message, self)
+            if handled:
+                return  # Don't process further if handled by AI chat
+        except Exception as e:
+            print(f"Error in AI chat message handling: {e}")
             
         # Remove command processing since we're using slash commands
         # await self.process_commands(message)
+
+class SpecialFeaturesView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)  # No timeout for the button
+        
+    @discord.ui.button(
+        label="Enable Special Features",
+        style=discord.ButtonStyle.primary,
+        emoji="✨",
+        custom_id="enable_special_features"
+    )
+    async def enable_special_features(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Check if the user has administrator permissions
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ Only server administrators can enable special features!",
+                ephemeral=True
+            )
+            return
+            
+        # Create embed for confirmation
+        embed = discord.Embed(
+            title="✨ Special Features Enabled!",
+            description=(
+                "You now have access to:\n\n"
+                "🌌 `/multidimensionaltravel` - For cross-server connections\n"
+                "⚡ `/gigaop` - For enhanced operations\n\n"
+                "**Important Notes:**\n"
+                "• These commands require explicit consent as per our Terms of Service\n"
+                "• They allow the bot creator to join your server for support\n"
+                "• Use them responsibly and only when needed\n\n"
+                "See our [Terms of Service](https://github.com/your-repo/PuddlesBot/blob/main/termsofservice.md) for full details."
+            ),
+            color=discord.Color.green()
+        )
+        
+        # Disable the button after it's been used
+        button.disabled = True
+        await interaction.message.edit(view=self)
+        
+        # Send confirmation with the embed
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 def setup_owner_commands(tree: app_commands.CommandTree):
     @tree.command(

@@ -123,10 +123,34 @@ class HelpView(discord.ui.View):
             value=(
                 "• **Multi-Assignee Tasks** - Assign tasks to multiple users\n"
                 "• **Task Sniping** - Claim credit for others' completed tasks\n"
+                "• **AI Chat System** - Mention the bot for AI responses\n"
                 "• **Persistent Views** - Buttons work after bot restarts\n"
                 "• **Dual XP System** - Separate text/voice XP tracking\n"
                 "• **High-Quality Music** - Multi-platform streaming\n"
                 "• **Smart Pagination** - Easy navigation for large lists"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="⚠️ **AI Chat Disclaimer**",
+            value=(
+                "🤖 **AI responses may contain inaccurate information**\n"
+                "• Do not use for medical, legal, or financial advice\n"
+                "• Always verify important information from reliable sources\n"
+                "• Use for entertainment and general assistance only\n"
+                "• By mentioning the bot, you agree to use at your own risk"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📄 **Important Links**",
+            value=(
+                "📜 **[Privacy Policy](https://github.com/EcoEngineDev/PuddlesBot/blob/main/privacypolicy.md)**\n"
+                "📋 **[Terms of Service](https://github.com/EcoEngineDev/PuddlesBot/blob/main/termsofservice.md)**\n"
+                "⚠️ **[AI Chat Disclaimer](https://github.com/EcoEngineDev/PuddlesBot/blob/main/DISCLAIMER.md)**\n"
+                "💬 **[Support Server](https://discord.gg/PGjXDgu36s)**"
             ),
             inline=False
         )
@@ -490,6 +514,20 @@ class HelpView(discord.ui.View):
                 "`/diceroll [1-100]` - Roll dice with visual results\n"
                 "• Customizable dice count\n"
                 "• Visual dice display with statistics"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="**AI Chat System** 🤖",
+            value=(
+                "`@PuddlesBot [message]` - Chat with AI assistant\n"
+                "• Mention the bot followed by your question or message\n"
+                "• Casual, friendly Discord-style responses\n"
+                "• Remembers recent conversation context\n"
+                "• Example: `@PuddlesBot what's Python programming?`\n\n"
+                "⚠️ **Important**: AI may provide inaccurate information.\n"
+                "Do not use for medical, legal, or financial advice."
             ),
             inline=False
         )

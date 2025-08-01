@@ -69,12 +69,7 @@ class Vocard(commands.Bot):
         if message.author.bot or not message.guild:
             return False
 
-        # Check if the bot is directly mentioned
-        if self.user.id in message.raw_mentions and not message.mention_everyone:
-            prefix = await self.command_prefix(self, message)
-            if not prefix:
-                return await message.channel.send("I don't have a bot prefix set.")
-            await message.channel.send(f"My prefix is `{prefix}`")
+        # Skip prefix message - handled by AI chat system
 
         # Fetch guild settings and check if the mesage is in the music request channel
         settings = await func.get_settings(message.guild.id)

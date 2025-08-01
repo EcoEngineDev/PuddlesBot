@@ -31,6 +31,7 @@
 - 🔧 **Server Utilities** - Moderation tools, user info, and administrative features
 - 🔄 **Persistent Views** - All systems work on reboot
 - 📄 **Smart Pagination** - Easy navigation for large task lists
+- 🤖 **AI Chat System** - Intelligent responses when bot is mentioned (auto-downloads model)
 
 ## 🚀 Quick Setup
 
@@ -72,6 +73,10 @@ LAVALINK_SECURE=
 GENIUS_TOKEN=
 MONGODB_URL=
 MONGODB_NAME=
+
+# AI Chat System (optional)
+OPENAI_API_KEY=
+PUDDLEAI_MODEL=
 ```
 
 4. **Set up Lavalink (for music features)**
@@ -83,6 +88,12 @@ MONGODB_NAME=
    ```bash
    python main.py
    ```
+
+**Note**: On first run, the bot will automatically download an AI model (1-4GB) for the chat system. This may take several minutes depending on your internet speed. The bot will show download progress and work with smart fallback responses until the model is ready.
+
+**Model Preference**: You can optionally set `PUDDLEAI_MODEL=tinyllama` (or `llama`, `phi`, etc.) in your `.env` file to prefer specific model types. The bot automatically prioritizes Llama models by default.
+
+**⚠️ AI Disclaimer**: The AI chat system may provide inaccurate information and should not be relied upon for important decisions. Do not use for medical, legal, or financial advice. Always verify important information from reliable sources. By using the AI chat feature, you acknowledge the risks and agree to our [AI Chat Disclaimer](DISCLAIMER.md). Use at your own risk and responsibility.
 
 ## 📋 Command Reference
 
@@ -195,6 +206,25 @@ MONGODB_NAME=
 - **High-Quality Audio**: Configurable quality presets
 - **Smart Queue**: Playlist support with shuffle and loop modes
 - **Performance Metrics**: Real-time audio statistics
+
+### AI Chat System Commands
+
+| Usage | Description | Features |
+|-------|-------------|----------|
+| `@PuddlesBot [message]` | Chat with AI assistant | Context-aware responses |
+| `@PuddlesBot what is Python?` | Ask questions | Knowledge-based answers |
+| `@PuddlesBot help me code` | Get coding help | Programming assistance |
+| `@PuddlesBot explain APIs` | Learn about topics | Educational responses |
+
+**Features:**
+- **Auto-Download**: Automatically downloads AI model on first run
+- **Smart Responses**: Context-aware answers to questions
+- **Conversation Memory**: Remembers recent chat history
+- **Multi-tier Intelligence**: OpenAI API → Local Model → Smart Fallback
+- **Programming Help**: Specialized responses for coding questions
+- **Casual Discord Tone**: Responds like a friendly server member
+- **Easy Setup**: No manual model installation required
+- **⚠️ Disclaimer**: AI may provide inaccurate information - use at your own risk
 
 ### Server Utilities & Moderation
 
