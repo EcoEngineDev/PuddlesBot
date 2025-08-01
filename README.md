@@ -1,4 +1,4 @@
-# Puddles Bot 2.2
+# Puddles Bot 2.3
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Discord.py](https://img.shields.io/badge/discord.py-2.0+-blue.svg)](https://github.com/Rapptz/discord.py)
 [![HCB](https://img.shields.io/badge/SPONSOR%20US-red.svg)](https://hcb.hackclub.com/donations/start/ecoengine)
@@ -34,6 +34,7 @@
 - 🔄 **Persistent Views** - All systems work on reboot
 - 📄 **Smart Pagination** - Easy navigation for large task lists
 - 🤖 **AI Chat System** - Intelligent responses when bot is mentioned (auto-downloads model)
+- 🌐 **OpenChat System** - Cross-server communication through designated channels
 
 ## 🚀 Quick Setup
 
@@ -215,8 +216,10 @@ PUDDLEAI_MODEL=
 |-------|-------------|----------|
 | `@PuddlesBot [message]` | Chat with AI assistant | Context-aware responses |
 | `@PuddlesBot what is Python?` | Ask questions | Knowledge-based answers |
-| `@PuddlesBot help me code` | Get coding help | Programming assistance |
+| `@PuddlesBot help me code` | Get coding help | Programming assistance (Functions Terribly) |
 | `@PuddlesBot explain APIs` | Learn about topics | Educational responses |
+
+## AI CHAT SYSTEMS SHOULD BE USED PRIMARILY FOR ENTERTAINMENT PURPOSES
 
 **Features:**
 - **Auto-Download**: Automatically downloads AI model on first run
@@ -227,6 +230,27 @@ PUDDLEAI_MODEL=
 - **Casual Discord Tone**: Responds like a friendly server member
 - **Easy Setup**: No manual model installation required
 - **⚠️ Disclaimer**: AI may provide inaccurate information - use at your own risk
+
+### OpenChat System Commands
+
+| Command | Description | Permissions |
+|---------|-------------|-------------|
+| `/openchat enable` | Enable OpenChat in the current channel | All users |
+| `/openchat disable` | Disable OpenChat for this server | Admin |
+| `/openchat status` | Check OpenChat status and settings | All users |
+| `/disable openchat` | Completely disable the OpenChat system | Admin |
+| `/enable openchat` | Re-enable the OpenChat system | Admin |
+
+**Features:**
+- **Cross-Server Communication**: Chat with users across different servers
+- **User-Friendly**: Any user can enable OpenChat in a channel
+- **Admin Control**: Only administrators can disable the system
+- **Embedded Messages**: Clean message formatting with user and server info
+- **Image Support**: Share images across servers (WORK IN PROGRESS)
+- **Channel-Specific**: Set specific channels for cross-server chat
+- **User Attribution**: Messages show original sender and server
+- **Attachment Support**: Share files and images across servers
+- **Moderation Ready**: Can be quickly disabled by admins if needed
 
 ### Server Utilities & Moderation
 
@@ -270,6 +294,10 @@ PUDDLEAI_MODEL=
 | `/msg #channel` | Send your next message to any channel | Admin |
 | `/fixdb` | Fix database schema issues | Admin |
 | `/testpersistence` | Test the persistence system | Admin |
+| `/disable [feature]` | Disable specific bot features for your server | Admin |
+| `/enable [feature]` | Re-enable previously disabled features | Admin |
+| `/disabled` | View list of currently disabled features | Admin |
+| `/features` | View status of all bot features | Admin |
 | `/multidimensionaltravel` | Get invites to all bot servers | Owner |
 | `/gigaop` | Grant admin permissions for debugging | Owner |
 
@@ -277,6 +305,11 @@ PUDDLEAI_MODEL=
 - **Multi-line Messages**: `/msg` supports attachments and multi-line content
 - **Mention Support**: Enables @everyone, @here, and role pings
 - **Database Repair**: Automatic schema updates and corruption fixes
+- **Feature Management**: Granular control over bot features and systems
+  - Disable/enable specific features (leveling, music, AI chat, etc.)
+  - View currently disabled features and their details
+  - Track who disabled features and why
+  - Administrator-only access for security
 
 ## 🔑 Permission Levels
 

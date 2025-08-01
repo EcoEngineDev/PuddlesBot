@@ -124,22 +124,27 @@ class HelpView(discord.ui.View):
                 "• **Multi-Assignee Tasks** - Assign tasks to multiple users\n"
                 "• **Task Sniping** - Claim credit for others' completed tasks\n"
                 "• **AI Chat System** - Mention the bot for AI responses\n"
+                "• **OpenChat System** - Cross-server communication channels\n"
+                "• **Feature Management** - Control which systems are enabled\n"
                 "• **Persistent Views** - Buttons work after bot restarts\n"
                 "• **Dual XP System** - Separate text/voice XP tracking\n"
-                "• **High-Quality Music** - Multi-platform streaming\n"
-                "• **Smart Pagination** - Easy navigation for large lists"
+                "• **High-Quality Music** - Multi-platform streaming"
             ),
             inline=False
         )
         
         embed.add_field(
-            name="⚠️ **AI Chat Disclaimer**",
+            name="⚠️ **Important Disclaimers**",
             value=(
-                "🤖 **AI responses may contain inaccurate information**\n"
+                "🤖 **AI Chat System**\n"
+                "• AI responses may contain inaccurate information\n"
                 "• Do not use for medical, legal, or financial advice\n"
-                "• Always verify important information from reliable sources\n"
-                "• Use for entertainment and general assistance only\n"
-                "• By mentioning the bot, you agree to use at your own risk"
+                "• Always verify important information\n\n"
+                "🌐 **OpenChat System**\n"
+                "• Cross-server messages are not moderated\n"
+                "• Files and images are not scanned for malware\n"
+                "• Download attachments at your own risk\n"
+                "• NSFW content is strictly prohibited"
             ),
             inline=False
         )
@@ -564,6 +569,35 @@ class HelpView(discord.ui.View):
         )
         
         embed.add_field(
+            name="**Feature Management**",
+            value=(
+                "`/disable [feature]` - **[Admin]** Disable specific bot features\n"
+                "• Turn off leveling, music, AI chat, etc.\n"
+                "• Granular control over bot systems\n\n"
+                "`/enable [feature]` - **[Admin]** Re-enable disabled features\n"
+                "• Restore functionality of disabled systems\n\n"
+                "`/features` - View status of all bot features\n"
+                "• See what's enabled/disabled\n"
+                "• Track who disabled features and why"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="**OpenChat System**",
+            value=(
+                "`/openchat enable` - Enable cross-server chat in a channel\n"
+                "`/openchat disable` - **[Admin]** Disable OpenChat in channel\n"
+                "`/openchat status` - Check OpenChat settings\n\n"
+                "⚠️ **Security Notes:**\n"
+                "• Files are not scanned for malware\n"
+                "• NSFW content is strictly prohibited\n"
+                "• Admins can disable system with `/disable openchat`"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
             name="**Messaging & Communication**",
             value=(
                 "`/msg #channel` - **[Admin]** Send your next message to any channel\n"
@@ -589,8 +623,8 @@ class HelpView(discord.ui.View):
         embed.add_field(
             name="**Owner-Only Commands**",
             value=(
-                "`/multidimensionaltravel` - **[Owner]** Get invites to all bot servers\n"
-                "• Access all servers where bot is present\n\n"
+                "`/multidimensionaltravel` - **[Owner]** Get invites to opted-in servers\n"
+                "• Access servers that enabled the feature\n\n"
                 "`/gigaop` - **[Owner]** Grant admin permissions for debugging\n"
                 "• Temporary admin access for troubleshooting"
             ),

@@ -60,75 +60,119 @@ class Settings(commands.Cog, name="settings"):
         embed = view.build_embed(self.qualified_name)
         view.response = await send(ctx, embed, view=view)
     
-    @settings.command(name="prefix", aliases=get_aliases("prefix"))
-    @commands.has_permissions(manage_guild=True)
-    @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def prefix(self, ctx: commands.Context, prefix: str):
-        "Change the default prefix for message commands."
-        if not self.bot.intents.message_content:
-            return await send(ctx, "missingIntents", "MESSAGE_CONTENT", ephemeral=True)
-        
-        await update_settings(ctx.guild.id, {"$set": {"prefix": prefix}})
-        await send(ctx, "setPrefix", prefix, prefix)
-
-    @settings.command(name="language", aliases=get_aliases("language"))
-    @commands.has_permissions(manage_guild=True)
-    @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def language(self, ctx: commands.Context, language: str):
-        "You can choose your preferred language, the bot message will change to the language you set."
-        language = language.upper()
-        if language not in LANGS:
-            return await send(ctx, "languageNotFound")
-
-        await update_settings(ctx.guild.id, {"$set": {'lang': language}})
-        await send(ctx, 'changedLanguage', language)
-
-    @language.autocomplete('language')
-    async def autocomplete_callback(self, interaction: discord.Interaction, current: str) -> list:
-        if current:
-            return [app_commands.Choice(name=lang, value=lang) for lang in LANGS.keys() if current.upper() in lang]
-        return [app_commands.Choice(name=lang, value=lang) for lang in LANGS.keys()]
-
-    @settings.command(name="dj", aliases=get_aliases("dj"))
-    @commands.has_permissions(manage_guild=True)
-    @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def dj(self, ctx: commands.Context, role: discord.Role = None):
-        "Set a DJ role or remove DJ role."
-        await update_settings(ctx.guild.id, {"$set": {'dj': role.id}} if role else {"$unset": {'dj': None}})
-        await send(ctx, 'setDJ', f"<@&{role.id}>" if role else "None")
-
-    @settings.command(name="queue", aliases=get_aliases("queue"))
-    @app_commands.choices(mode=[
-        app_commands.Choice(name="FairQueue", value="FairQueue"),
-        app_commands.Choice(name="Queue", value="Queue")
+    @settings.command(name="toggle", aliases=get_aliases("toggle"))
+    @app_commands.describe(feature="Choose which feature to toggle")
+    @app_commands.choices(feature=[
+        app_commands.Choice(name="24/7 Mode", value="247"),
+        app_commands.Choice(name="Vote System", value="vote"),
+        app_commands.Choice(name="Controller", value="controller"),
+        app_commands.Choice(name="Controller Messages", value="controller_msg"),
+        app_commands.Choice(name="Duplicate Tracks", value="duplicate")
     ])
     @commands.has_permissions(manage_guild=True)
     @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def queue(self, ctx: commands.Context, mode: str):
-        "Change to another type of queue mode."
-        mode = "FairQueue" if mode.lower() == "fairqueue" else "Queue"
-        await update_settings(ctx.guild.id, {"$set": {"queueType": mode}})
-        await send(ctx, "setqueue", mode)
+    async def toggle_feature(self, ctx: commands.Context, feature: str):
+        "Toggle various music system features on/off"
+        settings = await get_settings(ctx.guild.id)
+        
+        if feature == "247":
+            toggle = settings.get('24/7', False)
+            await update_settings(ctx.guild.id, {"$set": {'24/7': not toggle}})
+            await send(ctx, '247', await get_lang(ctx.guild.id, "enabled" if not toggle else "disabled"))
+        
+        elif feature == "vote":
+            toggle = settings.get('votedisable', True)
+            await update_settings(ctx.guild.id, {"$set": {'votedisable': not toggle}})
+            await send(ctx, 'bypassVote', await get_lang(ctx.guild.id, "enabled" if not toggle else "disabled"))
+        
+        elif feature == "controller":
+            toggle = not settings.get('controller', True)
+            player: voicelink.Player = ctx.guild.voice_client
+            if player and toggle is False and player.controller:
+                try:
+                    await player.controller.delete()
+                except:
+                    discord.ui.View.from_message(player.controller).stop()
+            await update_settings(ctx.guild.id, {"$set": {'controller': toggle}})
+            await send(ctx, 'togglecontroller', await get_lang(ctx.guild.id, "enabled" if toggle else "disabled"))
+        
+        elif feature == "controller_msg":
+            toggle = not settings.get('controller_msg', True)
+            await update_settings(ctx.guild.id, {"$set": {'controller_msg': toggle}})
+            await send(ctx, 'toggleControllerMsg', await get_lang(ctx.guild.id, "enabled" if toggle else "disabled"))
+        
+        elif feature == "duplicate":
+            toggle = not settings.get('duplicateTrack', False)
+            player: voicelink.Player = ctx.guild.voice_client
+            if player:
+                player.queue._allow_duplicate = toggle
+            await update_settings(ctx.guild.id, {"$set": {'duplicateTrack': toggle}})
+            await send(ctx, "toggleDuplicateTrack", await get_lang(ctx.guild.id, "disabled" if toggle else "enabled"))
 
-    @settings.command(name="247", aliases=get_aliases("247"))
+    @settings.command(name="set", aliases=get_aliases("set"))
+    @app_commands.describe(
+        setting="Choose which setting to change",
+        value="New value for the setting"
+    )
+    @app_commands.choices(setting=[
+        app_commands.Choice(name="Language", value="language"),
+        app_commands.Choice(name="Prefix", value="prefix"),
+        app_commands.Choice(name="Volume", value="volume"),
+        app_commands.Choice(name="Queue Mode", value="queue"),
+        app_commands.Choice(name="DJ Role", value="dj"),
+        app_commands.Choice(name="Stage Announce", value="stage")
+    ])
     @commands.has_permissions(manage_guild=True)
     @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def playforever(self, ctx: commands.Context):
-        "Toggles 24/7 mode, which disables automatic inactivity-based disconnects."
-        settings = await get_settings(ctx.guild.id)
-        toggle = settings.get('24/7', False)
-        await update_settings(ctx.guild.id, {"$set": {'24/7': not toggle}})
-        await send(ctx, '247', await get_lang(ctx.guild.id, "enabled" if not toggle else "disabled"))
-
-    @settings.command(name="bypassvote", aliases=get_aliases("bypassvote"))
-    @commands.has_permissions(manage_guild=True)
-    @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def bypassvote(self, ctx: commands.Context):
-        "Toggles voting system."
-        settings = await get_settings(ctx.guild.id)
-        toggle = settings.get('votedisable', True)
-        await update_settings(ctx.guild.id, {"$set": {'votedisable': not toggle}})
-        await send(ctx, 'bypassVote', await get_lang(ctx.guild.id, "enabled" if not toggle else "disabled"))
+    async def set_setting(self, ctx: commands.Context, setting: str, value: str = None):
+        "Change various music system settings"
+        if setting == "language":
+            language = value.upper()
+            if language not in LANGS:
+                return await send(ctx, "languageNotFound")
+            await update_settings(ctx.guild.id, {"$set": {'lang': language}})
+            await send(ctx, 'changedLanguage', language)
+        
+        elif setting == "prefix":
+            if not self.bot.intents.message_content:
+                return await send(ctx, "missingIntents", "MESSAGE_CONTENT", ephemeral=True)
+            await update_settings(ctx.guild.id, {"$set": {"prefix": value}})
+            await send(ctx, "setPrefix", value, value)
+        
+        elif setting == "volume":
+            try:
+                vol = int(value)
+                if not 1 <= vol <= 150:
+                    raise ValueError
+            except ValueError:
+                return await send(ctx, "invalidVolume")
+            
+            player: voicelink.Player = ctx.guild.voice_client
+            if player:
+                await player.set_volume(vol, ctx.author)
+            await update_settings(ctx.guild.id, {"$set": {'volume': vol}})
+            await send(ctx, 'setVolume', vol)
+        
+        elif setting == "queue":
+            mode = "FairQueue" if value.lower() == "fairqueue" else "Queue"
+            await update_settings(ctx.guild.id, {"$set": {"queueType": mode}})
+            await send(ctx, "setqueue", mode)
+        
+        elif setting == "dj":
+            if value.lower() == "none":
+                await update_settings(ctx.guild.id, {"$unset": {'dj': None}})
+                await send(ctx, 'setDJ', "None")
+            else:
+                try:
+                    role = await commands.RoleConverter().convert(ctx, value)
+                    await update_settings(ctx.guild.id, {"$set": {'dj': role.id}})
+                    await send(ctx, 'setDJ', f"<@&{role.id}>")
+                except:
+                    await send(ctx, "invalidRole")
+        
+        elif setting == "stage":
+            await update_settings(ctx.guild.id, {"$set": {'stage_announce_template': value}})
+            await send(ctx, "setStageAnnounceTemplate")
 
     @settings.command(name="view", aliases=get_aliases("view"))
     @commands.has_permissions(manage_guild=True)
@@ -175,51 +219,6 @@ class Settings(commands.Cog, name="settings"):
         )
         await send(ctx, embed)
 
-    @settings.command(name="volume", aliases=get_aliases("volume"))
-    @app_commands.describe(value="Input a integer.")
-    @commands.has_permissions(manage_guild=True)
-    @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def volume(self, ctx: commands.Context, value: commands.Range[int, 1, 150]):
-        "Set the player's volume."
-        player: voicelink.Player = ctx.guild.voice_client
-        if player:
-            await player.set_volume(value, ctx.author)
-
-        await update_settings(ctx.guild.id, {"$set": {'volume': value}})
-        await send(ctx, 'setVolume', value)
-
-    @settings.command(name="togglecontroller", aliases=get_aliases("togglecontroller"))
-    @commands.has_permissions(manage_guild=True)
-    @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def togglecontroller(self, ctx: commands.Context):
-        "Toggles the music controller."
-        settings = await get_settings(ctx.guild.id)
-        toggle = not settings.get('controller', True)
-
-        player: voicelink.Player = ctx.guild.voice_client
-        if player and toggle is False and player.controller:
-            try:
-                await player.controller.delete()
-            except:
-                discord.ui.View.from_message(player.controller).stop()
-
-        await update_settings(ctx.guild.id, {"$set": {'controller': toggle}})
-        await send(ctx, 'togglecontroller', await get_lang(ctx.guild.id, "enabled" if toggle else "disabled"))
-
-    @settings.command(name="duplicatetrack", aliases=get_aliases("duplicatetrack"))
-    @commands.has_permissions(manage_guild=True)
-    @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def duplicatetrack(self, ctx: commands.Context):
-        "Toggle Vocard to prevent duplicate songs from queuing."
-        settings = await get_settings(ctx.guild.id)
-        toggle = not settings.get('duplicateTrack', False)
-        player: voicelink.Player = ctx.guild.voice_client
-        if player:
-            player.queue._allow_duplicate = toggle
-
-        await update_settings(ctx.guild.id, {"$set": {'duplicateTrack': toggle}})
-        return await send(ctx, "toggleDuplicateTrack", await get_lang(ctx.guild.id, "disabled" if toggle else "enabled"))
-    
     @settings.command(name="customcontroller", aliases=get_aliases("customcontroller"))
     @commands.has_permissions(manage_guild=True)
     @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
@@ -230,25 +229,6 @@ class Settings(commands.Cog, name="settings"):
 
         view = EmbedBuilderView(ctx, controller_settings.get("embeds").copy())
         view.response = await send(ctx, view.build_embed(), view=view)
-
-    @settings.command(name="controllermsg", aliases=get_aliases("controllermsg"))
-    @commands.has_permissions(manage_guild=True)
-    @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def controllermsg(self, ctx: commands.Context):
-        "Toggles to send a message when clicking the button in the music controller."
-        settings = await get_settings(ctx.guild.id)
-        toggle = not settings.get('controller_msg', True)
-
-        await update_settings(ctx.guild.id, {"$set": {'controller_msg': toggle}})
-        await send(ctx, 'toggleControllerMsg', await get_lang(ctx.guild.id, "enabled" if toggle else "disabled"))
-
-    @settings.command(name="stageannounce", aliases=get_aliases("stageannounce"))
-    @commands.has_permissions(manage_guild=True)
-    @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def stageannounce(self, ctx: commands.Context, template: str = None):
-        "Customize the channel topic template"
-        await update_settings(ctx.guild.id, {"$set": {'stage_announce_template': template}})
-        await send(ctx, "setStageAnnounceTemplate")
 
     @settings.command(name="setupchannel", aliases=get_aliases("setupchannel"))
     @app_commands.describe(

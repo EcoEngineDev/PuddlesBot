@@ -13,6 +13,7 @@ import aiohttp
 import urllib.request
 import urllib.parse
 from pathlib import Path
+import disable  # Add this to imports
 
 # Set up logging for AI Chat
 logger = logging.getLogger(__name__)
@@ -615,6 +616,10 @@ def generate_fallback_response(message: str, user_name: str) -> str:
 async def handle_bot_mention(message: discord.Message, bot: commands.Bot) -> bool:
     """Handle when the bot is mentioned in a message"""
     
+    # Check if AI chat is disabled for this server
+    if await disable.is_feature_disabled(message.guild.id, "ai_chat"):
+        return False
+        
     # Check if bot is mentioned and it's not a self-message
     if bot.user not in message.mentions or message.author.bot:
         return False

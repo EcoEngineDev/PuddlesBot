@@ -511,516 +511,370 @@ class EditInvitesModal(discord.ui.Modal):
 # Commands
 
 @app_commands.command(
-    name="resetinvites",
-    description="Reset all invite data for this server (Admin only)"
-)
-@log_command
-async def resetinvites(interaction: discord.Interaction):
-    """Reset all invite data with confirmation"""
-    # Check permissions
-    if not await can_manage_invites(interaction):
-        await interaction.response.send_message(
-            "❌ You don't have permission to manage invite data!\n\n"
-            "Only administrators or users on the invite whitelist can use this command.\n"
-            "Ask an admin to add you with `/invw add @user`",
-            ephemeral=True
-        )
-        return
-    
-    # Show confirmation
-    embed = discord.Embed(
-        title="⚠️ Reset All Invite Data",
-        description=(
-            "**This will permanently delete:**\n"
-            "• All user invite statistics\n"
-            "• All join/leave tracking records\n"
-            "• All historical invite data\n\n"
-            "**This action CANNOT be undone!**\n\n"
-            "Are you sure you want to reset all invite data for this server?"
-        ),
-        color=discord.Color.red()
-    )
-    
-    view = ResetInvitesConfirmView()
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
-@app_commands.command(
-    name="editinvites",
-    description="Edit invite statistics for a user (Admin only)"
+    name="invite",
+    description="Manage server invites and view statistics"
 )
 @app_commands.describe(
-    user="The user whose invite statistics you want to edit"
+    action="Choose which invite action to perform",
+    user="The user to show/edit invites for (if applicable)",
+    value="Additional value for the action (if needed)"
 )
+@app_commands.choices(action=[
+    app_commands.Choice(name="stats", value="stats"),           # Show server stats
+    app_commands.Choice(name="top", value="top"),              # Show top inviters
+    app_commands.Choice(name="show", value="show"),            # Show user stats
+    app_commands.Choice(name="edit", value="edit"),            # Edit user stats
+    app_commands.Choice(name="sync", value="sync"),            # Sync invite data
+    app_commands.Choice(name="reset", value="reset"),          # Reset all data
+    app_commands.Choice(name="admin", value="admin"),          # Add/remove admin
+    app_commands.Choice(name="resetdb", value="resetdb")       # Reset database
+])
 @log_command
-async def editinvites(interaction: discord.Interaction, user: discord.Member):
-    """Edit invite statistics for a specific user"""
-    # Check permissions
-    if not await can_manage_invites(interaction):
-        await interaction.response.send_message(
-            "❌ You don't have permission to manage invite data!\n\n"
-            "Only administrators or users on the invite whitelist can use this command.\n"
-            "Ask an admin to add you with `/invw add @user`",
-            ephemeral=True
-        )
-        return
+async def invite_command(interaction: discord.Interaction, action: str, user: discord.Member = None, value: str = None):
+    """Combined invite management command"""
     
-    # Get current stats
-    init_invite_db(str(interaction.guild_id))
-    session = get_session(str(interaction.guild_id))
-    try:
-        current_stats = session.query(InviteStats).filter_by(
-            guild_id=str(interaction.guild_id),
-            inviter_id=str(user.id)
-        ).first()
+    if action == "stats":
+        # Server stats (former invitestats)
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Only administrators can view server statistics!", ephemeral=True)
+            return
         
-        modal = EditInvitesModal(user, current_stats)
-        await interaction.response.send_modal(modal)
-        
-    except Exception as e:
-        print(f"Error in editinvites command: {e}")
-        print(traceback.format_exc())
-        await interaction.response.send_message(
-            "❌ An error occurred while loading user statistics.",
-            ephemeral=True
-        )
-    finally:
-        session.close()
+        init_invite_db(str(interaction.guild_id))
+        session = get_session(str(interaction.guild_id))
+        try:
+            guild_id = str(interaction.guild_id)
+            
+            # Get total stats
+            total_stats = session.query(
+                func.sum(InviteStats.total_invites).label('total_invites'),
+                func.sum(InviteStats.total_leaves).label('total_leaves'),
+                func.sum(InviteStats.net_invites).label('net_invites'),
+                func.count(InviteStats.id).label('active_inviters')
+            ).filter_by(guild_id=guild_id).first()
+            
+            # Get recent activity (last 7 days)
+            from datetime import timedelta
+            week_ago = datetime.utcnow() - timedelta(days=7)
+            recent_joins = session.query(InviteJoin).filter(
+                InviteJoin.guild_id == guild_id,
+                InviteJoin.joined_at >= week_ago
+            ).count()
+            
+            recent_leaves = session.query(InviteJoin).filter(
+                InviteJoin.guild_id == guild_id,
+                InviteJoin.left_at >= week_ago,
+                InviteJoin.has_left == True
+            ).count()
+            
+            embed = discord.Embed(
+                title="📊 Server Invite Statistics",
+                description=f"Comprehensive invite data for **{interaction.guild.name}**" if interaction.guild else "this server",
+                color=discord.Color.green()
+            )
+            
+            embed.add_field(
+                name="📈 All Time Stats",
+                value=f"**Total Invites:** {total_stats.total_invites or 0}\n"
+                      f"**Total Leaves:** {total_stats.total_leaves or 0}\n"
+                      f"**Net Invites:** {total_stats.net_invites or 0}\n"
+                      f"**Active Inviters:** {total_stats.active_inviters or 0}",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📅 Last 7 Days",
+                value=f"**New Joins:** {recent_joins}\n"
+                      f"**Leaves:** {recent_leaves}\n"
+                      f"**Net Growth:** {recent_joins - recent_leaves}",
+                inline=True
+            )
+            
+            if total_stats.total_invites and total_stats.total_invites > 0:
+                retention_rate = ((total_stats.total_invites - total_stats.total_leaves) / total_stats.total_invites) * 100
+                embed.add_field(
+                    name="📊 Server Retention",
+                    value=f"**{retention_rate:.1f}%**",
+                    inline=True
+                )
+            
+            embed.set_footer(text="💡 Use /invite top to see individual user rankings")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            print(f"Error in invite stats: {e}")
+            await interaction.response.send_message("❌ An error occurred while fetching server statistics.", ephemeral=True)
+        finally:
+            session.close()
 
-@app_commands.command(
-    name="invw",
-    description="Add or remove a user from the invite admin whitelist (Admin only)"
-)
-@app_commands.describe(
-    user="The user to add/remove from the invite admin whitelist",
-    action="The action to perform: 'add' or 'remove'"
-)
-@checks.has_permissions(administrator=True)
-@log_command
-async def invw(interaction: discord.Interaction, user: discord.Member, action: str):
-    """Manage invite admin whitelist"""
-    if action.lower() not in ['add', 'remove']:
-        await interaction.response.send_message(
-            "❌ Invalid action! Use 'add' or 'remove'.",
-            ephemeral=True
-        )
-        return
-    
-    init_invite_db(str(interaction.guild_id))
-    session = get_session(str(interaction.guild_id))
-    try:
-        existing_admin = session.query(InviteAdmin).filter_by(
-            user_id=str(user.id),
-            server_id=str(interaction.guild_id)
-        ).first()
-        
-        if action.lower() == 'add':
-            if existing_admin:
+    elif action == "top":
+        # Show top inviters (former topinvite)
+        init_invite_db(str(interaction.guild_id))
+        session = get_session(str(interaction.guild_id))
+        try:
+            top_inviters = session.query(InviteStats).filter_by(
+                guild_id=str(interaction.guild_id)
+            ).order_by(desc(InviteStats.net_invites)).limit(10).all()
+            
+            if not top_inviters:
                 await interaction.response.send_message(
-                    f"❌ {user.display_name} is already in the invite admin whitelist!",
+                    "📊 No invite data found for this server yet!\n"
+                    "Invite tracking starts when the bot is online and users join through invites.",
                     ephemeral=True
                 )
                 return
             
-            new_admin = InviteAdmin(
-                user_id=str(user.id),
-                server_id=str(interaction.guild_id),
-                added_by=str(interaction.user.id)
-            )
-            session.add(new_admin)
-            session.commit()
-            
-            await interaction.response.send_message(
-                f"✅ Added {user.display_name} to the invite admin whitelist!\n"
-                f"They can now use invite management commands like `/editinvites` and `/resetinvites`.",
-                ephemeral=True
+            embed = discord.Embed(
+                title="🏆 Top Inviters",
+                description=f"Top invite statistics for **{interaction.guild.name}**",
+                color=discord.Color.gold()
             )
             
-        else:  # remove
-            if not existing_admin:
-                await interaction.response.send_message(
-                    f"❌ {user.display_name} is not in the invite admin whitelist!",
-                    ephemeral=True
-                )
-                return
-            
-            session.delete(existing_admin)
-            session.commit()
-            
-            await interaction.response.send_message(
-                f"✅ Removed {user.display_name} from the invite admin whitelist!\n"
-                f"They can no longer use invite management commands (unless they're an admin).",
-                ephemeral=True
-            )
-            
-    except Exception as e:
-        print(f"Error in invw command: {str(e)}")
-        print(traceback.format_exc())
-        await interaction.response.send_message(
-            f"An error occurred while updating the whitelist: {str(e)}",
-            ephemeral=True
-        )
-        session.rollback()
-    finally:
-        session.close()
-
-@app_commands.command(
-    name="topinvite",
-    description="Show the top 10 inviters in this server"
-)
-@log_command
-async def topinvite(interaction: discord.Interaction):
-    """Show top inviters with their statistics"""
-    init_invite_db(str(interaction.guild_id))
-    session = get_session(str(interaction.guild_id))
-    try:
-        # Get top 10 inviters by net invites
-        top_inviters = session.query(InviteStats).filter_by(
-            guild_id=str(interaction.guild_id)
-        ).order_by(desc(InviteStats.net_invites)).limit(10).all()
-        
-        if not top_inviters:
-            await interaction.response.send_message(
-                "📊 No invite data found for this server yet!\n"
-                "Invite tracking starts when the bot is online and users join through invites.\n\n"
-                "To get started:\n"
-                "• Use `/invitesync` to sync existing invites\n"
-                "• Use `/editinvites @user` to manually set invite counts\n"
-                "• Create new invites and have people join through them",
-                ephemeral=True
-            )
-            return
-        
-        embed = discord.Embed(
-            title="🏆 Top Inviters",
-            description=f"Top invite statistics for **{interaction.guild.name}**" if interaction.guild else "this server",
-            color=discord.Color.gold()
-        )
-        
-        for i, stats in enumerate(top_inviters, 1):
-            try:
-                if _client:
-                    user = await _client.fetch_user(int(stats.inviter_id))
-                    username = user.display_name if user else f"Unknown User (ID: {stats.inviter_id})"
-                else:
-                    member = interaction.guild.get_member(int(stats.inviter_id))
-                    username = member.display_name if member else f"Unknown User (ID: {stats.inviter_id})"
-            except:
-                username = f"Unknown User (ID: {stats.inviter_id})"
-            
-            # Determine emoji based on ranking
-            if i == 1:
-                emoji = "🥇"
-            elif i == 2:
-                emoji = "🥈"
-            elif i == 3:
-                emoji = "🥉"
-            else:
-                emoji = f"{i}."
-            
-            embed.add_field(
-                name=f"{emoji} {username}",
-                value=f"**Invites:** {stats.total_invites}\n"
-                      f"**Leaves:** {stats.total_leaves}\n"
-                      f"**Net:** {stats.net_invites}",
-                inline=True
-            )
-        
-        # Add server totals
-        total_invites = sum(s.total_invites for s in top_inviters)
-        total_leaves = sum(s.total_leaves for s in top_inviters)
-        total_net = sum(s.net_invites for s in top_inviters)
-        
-        embed.add_field(
-            name="📈 Server Totals",
-            value=f"**Total Invites:** {total_invites}\n"
-                  f"**Total Leaves:** {total_leaves}\n"
-                  f"**Net Invites:** {total_net}",
-            inline=False
-        )
-        
-        embed.set_footer(text="💡 Net Invites = Total Invites - People Who Left")
-        
-        await interaction.response.send_message(embed=embed)
-        
-    except Exception as e:
-        print(f"Error in topinvite command: {e}")
-        print(traceback.format_exc())
-        await interaction.response.send_message(
-            "❌ An error occurred while fetching invite statistics.",
-            ephemeral=True
-        )
-    finally:
-        session.close()
-
-@app_commands.command(
-    name="showinvites",
-    description="Show invite statistics for a specific user"
-)
-@app_commands.describe(
-    user="The user to show invite statistics for"
-)
-@log_command
-async def showinvites(interaction: discord.Interaction, user: discord.Member):
-    """Show detailed invite statistics for a specific user"""
-    init_invite_db(str(interaction.guild_id))
-    session = get_session(str(interaction.guild_id))
-    try:
-        # Get user's invite stats
-        stats = session.query(InviteStats).filter_by(
-            guild_id=str(interaction.guild_id),
-            inviter_id=str(user.id)
-        ).first()
-        
-        if not stats:
-            await interaction.response.send_message(
-                f"📊 No invite data found for {user.display_name}.\n"
-                f"They haven't invited anyone to this server yet, or invite tracking started after their invites.\n\n"
-                f"Use `/editinvites @{user.display_name}` to manually set their invite count.",
-                ephemeral=True
-            )
-            return
-        
-        # Get detailed join information
-        joins = session.query(InviteJoin).filter_by(
-            guild_id=str(interaction.guild_id),
-            inviter_id=str(user.id)
-        ).order_by(desc(InviteJoin.joined_at)).limit(10).all()
-        
-        embed = discord.Embed(
-            title=f"📊 Invite Statistics for {user.display_name}",
-            color=discord.Color.blue()
-        )
-        
-        embed.set_thumbnail(url=user.display_avatar.url)
-        
-        # Main statistics
-        embed.add_field(
-            name="📈 Overview",
-            value=f"**Total Invites:** {stats.total_invites}\n"
-                  f"**People Left:** {stats.total_leaves}\n"
-                  f"**Net Invites:** {stats.net_invites}",
-            inline=True
-        )
-        
-        # Calculate retention rate
-        if stats.total_invites > 0:
-            retention_rate = ((stats.total_invites - stats.total_leaves) / stats.total_invites) * 100
-            embed.add_field(
-                name="📊 Retention Rate",
-                value=f"**{retention_rate:.1f}%**\n"
-                      f"({stats.total_invites - stats.total_leaves} stayed)",
-                inline=True
-            )
-        
-        embed.add_field(
-            name="🕒 Last Updated",
-            value=f"<t:{int(stats.last_updated.timestamp())}:R>",
-            inline=True
-        )
-        
-        # Recent invites
-        if joins:
-            recent_list = []
-            for join in joins[:5]:  # Show 5 most recent
+            for i, stats in enumerate(top_inviters, 1):
                 try:
                     if _client:
-                        invited_user = await _client.fetch_user(int(join.user_id))
-                        user_name = invited_user.display_name if invited_user else "Unknown"
+                        user = await _client.fetch_user(int(stats.inviter_id))
+                        username = user.display_name if user else f"Unknown User (ID: {stats.inviter_id})"
                     else:
-                        invited_member = interaction.guild.get_member(int(join.user_id))
-                        user_name = invited_member.display_name if invited_member else "Unknown"
+                        member = interaction.guild.get_member(int(stats.inviter_id))
+                        username = member.display_name if member else f"Unknown User (ID: {stats.inviter_id})"
                 except:
-                    user_name = f"User ID: {join.user_id}"
+                    username = f"Unknown User (ID: {stats.inviter_id})"
                 
-                status = "✅ Still here" if not join.has_left else f"❌ Left <t:{int(join.left_at.timestamp())}:R>"
-                recent_list.append(f"**{user_name}** - <t:{int(join.joined_at.timestamp())}:R>\n{status}")
+                emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+                
+                embed.add_field(
+                    name=f"{emoji} {username}",
+                    value=f"**Invites:** {stats.total_invites}\n"
+                          f"**Leaves:** {stats.total_leaves}\n"
+                          f"**Net:** {stats.net_invites}",
+                    inline=True
+                )
+            
+            await interaction.response.send_message(embed=embed)
+            
+        except Exception as e:
+            print(f"Error in invite top: {e}")
+            await interaction.response.send_message("❌ An error occurred while fetching top inviters.", ephemeral=True)
+        finally:
+            session.close()
+
+    elif action == "show":
+        # Show user stats (former showinvites)
+        if not user:
+            await interaction.response.send_message("❌ Please specify a user to show invite statistics for!", ephemeral=True)
+            return
+            
+        init_invite_db(str(interaction.guild_id))
+        session = get_session(str(interaction.guild_id))
+        try:
+            stats = session.query(InviteStats).filter_by(
+                guild_id=str(interaction.guild_id),
+                inviter_id=str(user.id)
+            ).first()
+            
+            if not stats:
+                await interaction.response.send_message(
+                    f"📊 No invite data found for {user.display_name}.",
+                    ephemeral=True
+                )
+                return
+            
+            embed = discord.Embed(
+                title=f"📊 Invite Statistics for {user.display_name}",
+                color=discord.Color.blue()
+            )
+            embed.set_thumbnail(url=user.display_avatar.url)
             
             embed.add_field(
-                name="🕐 Recent Invites",
-                value="\n\n".join(recent_list),
-                inline=False
-            )
-        
-        await interaction.response.send_message(embed=embed)
-        
-    except Exception as e:
-        print(f"Error in showinvites command: {e}")
-        print(traceback.format_exc())
-        await interaction.response.send_message(
-            "❌ An error occurred while fetching invite statistics.",
-            ephemeral=True
-        )
-    finally:
-        session.close()
-
-@app_commands.command(
-    name="invitesync",
-    description="Manually sync invite data (Admin only)"
-)
-@checks.has_permissions(administrator=True)
-@log_command
-async def invitesync(interaction: discord.Interaction):
-    """Manually sync invite data for the current server"""
-    await interaction.response.defer(ephemeral=True)
-    
-    try:
-        guild = interaction.guild
-        init_invite_db(str(guild.id))
-        await sync_invite_database(guild)
-        await update_invite_cache(guild)
-        
-        await interaction.followup.send(
-            "✅ Invite data synchronized successfully!\n"
-            "The bot will now track new invites and joins.",
-            ephemeral=True
-        )
-        
-    except Exception as e:
-        print(f"Error in invitesync command: {e}")
-        print(traceback.format_exc())
-        await interaction.followup.send(
-            f"❌ An error occurred while syncing invite data: {str(e)}",
-            ephemeral=True
-        )
-
-@app_commands.command(
-    name="invitereset",
-    description="Reset invite tracking tables (Admin only - use with caution!)"
-)
-@checks.has_permissions(administrator=True)
-@log_command
-async def invitereset(interaction: discord.Interaction):
-    """Reset invite tracking tables - WARNING: This deletes all invite data"""
-    await interaction.response.defer(ephemeral=True)
-    
-    try:
-        # Drop and recreate tables
-        Base.metadata.drop_all(bind=get_engine(str(interaction.guild_id)), tables=[
-            InviteTracker.__table__,
-            InviteJoin.__table__,
-            InviteStats.__table__,
-            InviteAdmin.__table__
-        ])
-        
-        Base.metadata.create_all(bind=get_engine(str(interaction.guild_id)), tables=[
-            InviteTracker.__table__,
-            InviteJoin.__table__,
-            InviteStats.__table__,
-            InviteAdmin.__table__
-        ])
-        
-        # Re-sync invite data
-        guild = interaction.guild
-        await sync_invite_database(guild)
-        await update_invite_cache(guild)
-        
-        await interaction.followup.send(
-            "⚠️ **Invite tracking tables reset successfully!**\n\n"
-            "All previous invite data has been deleted and tables recreated.\n"
-            "The system will now start tracking fresh from current invites.",
-            ephemeral=True
-        )
-        
-    except Exception as e:
-        print(f"Error in invitereset command: {e}")
-        print(traceback.format_exc())
-        await interaction.followup.send(
-            f"❌ An error occurred while resetting invite tables: {str(e)}",
-            ephemeral=True
-        )
-
-@app_commands.command(
-    name="invitestats",
-    description="Show overall server invite statistics (Admin only)"
-)
-@checks.has_permissions(administrator=True)
-@log_command
-async def invitestats(interaction: discord.Interaction):
-    """Show comprehensive server invite statistics"""
-    init_invite_db(str(interaction.guild_id))
-    session = get_session(str(interaction.guild_id))
-    try:
-        guild_id = str(interaction.guild_id)
-        
-        # Get total stats
-        total_stats = session.query(
-            func.sum(InviteStats.total_invites).label('total_invites'),
-            func.sum(InviteStats.total_leaves).label('total_leaves'),
-            func.sum(InviteStats.net_invites).label('net_invites'),
-            func.count(InviteStats.id).label('active_inviters')
-        ).filter_by(guild_id=guild_id).first()
-        
-        # Get recent activity (last 7 days)
-        from datetime import timedelta
-        week_ago = datetime.utcnow() - timedelta(days=7)
-        recent_joins = session.query(InviteJoin).filter(
-            InviteJoin.guild_id == guild_id,
-            InviteJoin.joined_at >= week_ago
-        ).count()
-        
-        recent_leaves = session.query(InviteJoin).filter(
-            InviteJoin.guild_id == guild_id,
-            InviteJoin.left_at >= week_ago,
-            InviteJoin.has_left == True
-        ).count()
-        
-        embed = discord.Embed(
-            title="📊 Server Invite Statistics",
-            description=f"Comprehensive invite data for **{interaction.guild.name}**" if interaction.guild else "this server",
-            color=discord.Color.green()
-        )
-        
-        embed.add_field(
-            name="📈 All Time Stats",
-            value=f"**Total Invites:** {total_stats.total_invites or 0}\n"
-                  f"**Total Leaves:** {total_stats.total_leaves or 0}\n"
-                  f"**Net Invites:** {total_stats.net_invites or 0}\n"
-                  f"**Active Inviters:** {total_stats.active_inviters or 0}",
-            inline=True
-        )
-        
-        embed.add_field(
-            name="📅 Last 7 Days",
-            value=f"**New Joins:** {recent_joins}\n"
-                  f"**Leaves:** {recent_leaves}\n"
-                  f"**Net Growth:** {recent_joins - recent_leaves}",
-            inline=True
-        )
-        
-        # Calculate retention rate
-        if total_stats.total_invites and total_stats.total_invites > 0:
-            retention_rate = ((total_stats.total_invites - total_stats.total_leaves) / total_stats.total_invites) * 100
-            embed.add_field(
-                name="📊 Server Retention",
-                value=f"**{retention_rate:.1f}%**",
+                name="📈 Overview",
+                value=f"**Total Invites:** {stats.total_invites}\n"
+                      f"**People Left:** {stats.total_leaves}\n"
+                      f"**Net Invites:** {stats.net_invites}",
                 inline=True
             )
-        
-        embed.set_footer(text="💡 Use /topinvite to see individual user rankings")
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        
-    except Exception as e:
-        print(f"Error in invitestats command: {e}")
-        print(traceback.format_exc())
-        await interaction.response.send_message(
-            "❌ An error occurred while fetching server statistics.",
-            ephemeral=True
+            
+            if stats.total_invites > 0:
+                retention_rate = ((stats.total_invites - stats.total_leaves) / stats.total_invites) * 100
+                embed.add_field(
+                    name="📊 Retention Rate",
+                    value=f"**{retention_rate:.1f}%**\n"
+                          f"({stats.total_invites - stats.total_leaves} stayed)",
+                    inline=True
+                )
+            
+            await interaction.response.send_message(embed=embed)
+            
+        except Exception as e:
+            print(f"Error in invite show: {e}")
+            await interaction.response.send_message("❌ An error occurred while fetching user statistics.", ephemeral=True)
+        finally:
+            session.close()
+
+    elif action == "edit":
+        # Edit user stats (former editinvites)
+        if not await can_manage_invites(interaction):
+            await interaction.response.send_message("❌ You don't have permission to edit invite statistics!", ephemeral=True)
+            return
+            
+        if not user:
+            await interaction.response.send_message("❌ Please specify a user to edit invite statistics for!", ephemeral=True)
+            return
+            
+        init_invite_db(str(interaction.guild_id))
+        session = get_session(str(interaction.guild_id))
+        try:
+            current_stats = session.query(InviteStats).filter_by(
+                guild_id=str(interaction.guild_id),
+                inviter_id=str(user.id)
+            ).first()
+            
+            modal = EditInvitesModal(user, current_stats)
+            await interaction.response.send_modal(modal)
+            
+        except Exception as e:
+            print(f"Error in invite edit: {e}")
+            await interaction.response.send_message("❌ An error occurred while loading user statistics.", ephemeral=True)
+        finally:
+            session.close()
+
+    elif action == "sync":
+        # Sync invite data (former invitesync)
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Only administrators can sync invite data!", ephemeral=True)
+            return
+            
+        await interaction.response.defer(ephemeral=True)
+        try:
+            guild = interaction.guild
+            init_invite_db(str(guild.id))
+            await sync_invite_database(guild)
+            await update_invite_cache(guild)
+            
+            await interaction.followup.send("✅ Invite data synchronized successfully!", ephemeral=True)
+            
+        except Exception as e:
+            print(f"Error in invite sync: {e}")
+            await interaction.followup.send(f"❌ An error occurred while syncing invite data: {str(e)}", ephemeral=True)
+
+    elif action == "reset":
+        # Reset invite data (former resetinvites)
+        if not await can_manage_invites(interaction):
+            await interaction.response.send_message("❌ You don't have permission to reset invite data!", ephemeral=True)
+            return
+            
+        view = ResetInvitesConfirmView()
+        embed = discord.Embed(
+            title="⚠️ Reset All Invite Data",
+            description="**This will permanently delete:**\n"
+                      "• All user invite statistics\n"
+                      "• All join/leave tracking records\n"
+                      "• All historical invite data\n\n"
+                      "**This action CANNOT be undone!**",
+            color=discord.Color.red()
         )
-    finally:
-        session.close()
+        
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    elif action == "admin":
+        # Add/remove admin (former invw)
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Only administrators can manage invite admins!", ephemeral=True)
+            return
+            
+        if not user:
+            await interaction.response.send_message("❌ Please specify a user to add/remove as invite admin!", ephemeral=True)
+            return
+            
+        if not value or value.lower() not in ['add', 'remove']:
+            await interaction.response.send_message("❌ Please specify 'add' or 'remove' as the value!", ephemeral=True)
+            return
+            
+        init_invite_db(str(interaction.guild_id))
+        session = get_session(str(interaction.guild_id))
+        try:
+            existing_admin = session.query(InviteAdmin).filter_by(
+                user_id=str(user.id),
+                server_id=str(interaction.guild_id)
+            ).first()
+            
+            if value.lower() == 'add':
+                if existing_admin:
+                    await interaction.response.send_message(f"❌ {user.display_name} is already an invite admin!", ephemeral=True)
+                    return
+                    
+                new_admin = InviteAdmin(
+                    user_id=str(user.id),
+                    server_id=str(interaction.guild_id),
+                    added_by=str(interaction.user.id)
+                )
+                session.add(new_admin)
+                session.commit()
+                
+                await interaction.response.send_message(
+                    f"✅ Added {user.display_name} as an invite admin!",
+                    ephemeral=True
+                )
+                
+            else:  # remove
+                if not existing_admin:
+                    await interaction.response.send_message(f"❌ {user.display_name} is not an invite admin!", ephemeral=True)
+                    return
+                    
+                session.delete(existing_admin)
+                session.commit()
+                
+                await interaction.response.send_message(
+                    f"✅ Removed {user.display_name} from invite admins!",
+                    ephemeral=True
+                )
+                
+        except Exception as e:
+            print(f"Error in invite admin: {e}")
+            await interaction.response.send_message("❌ An error occurred while managing invite admins.", ephemeral=True)
+            session.rollback()
+        finally:
+            session.close()
+
+    elif action == "resetdb":
+        # Reset database (former invitereset)
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Only administrators can reset the invite database!", ephemeral=True)
+            return
+            
+        await interaction.response.defer(ephemeral=True)
+        try:
+            Base.metadata.drop_all(bind=get_engine(str(interaction.guild_id)), tables=[
+                InviteTracker.__table__,
+                InviteJoin.__table__,
+                InviteStats.__table__,
+                InviteAdmin.__table__
+            ])
+            
+            Base.metadata.create_all(bind=get_engine(str(interaction.guild_id)), tables=[
+                InviteTracker.__table__,
+                InviteJoin.__table__,
+                InviteStats.__table__,
+                InviteAdmin.__table__
+            ])
+            
+            guild = interaction.guild
+            await sync_invite_database(guild)
+            await update_invite_cache(guild)
+            
+            await interaction.followup.send(
+                "⚠️ **Invite tracking database reset successfully!**\n"
+                "All previous data has been deleted and tables recreated.",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            print(f"Error in invite resetdb: {e}")
+            await interaction.followup.send(f"❌ An error occurred while resetting database: {str(e)}", ephemeral=True)
 
 def setup_inviter_commands(tree):
     """Add invite tracking commands to the command tree"""
-    tree.add_command(resetinvites)
-    tree.add_command(editinvites)
-    tree.add_command(invw)
-    tree.add_command(topinvite)
-    tree.add_command(showinvites)
-    tree.add_command(invitesync)
-    tree.add_command(invitestats)
-    tree.add_command(invitereset)
-    print("✅ Invite tracking commands loaded: /resetinvites, /editinvites, /invw, /topinvite, /showinvites, /invitesync, /invitestats, /invitereset")
+    tree.add_command(invite_command)
+    print("✅ Invite tracking commands loaded: /invite [action]")
 
 # Event handlers that need to be called from main.py
 async def on_member_join(member):

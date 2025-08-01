@@ -210,6 +210,8 @@ from ticket_system import (
     InteractiveMessage, MessageButton, Ticket, IntMsgCreator,
     InteractiveMessageView, ButtonSetupModal, TicketControlView
 )
+import disable  # Add this to imports at the top
+import openchat  # Add to imports
 
 # Music system configuration
 ENABLE_MUSIC_SYSTEM = True  # Enable music system with fresh Vocard installation
@@ -268,6 +270,20 @@ class CommandCheck(discord.app_commands.CommandTree):
         if not interaction.guild:
             await interaction.response.send_message("This command can only be used in guilds!")
             return False
+            
+        # Skip disable check for enable/disable/features commands
+        if interaction.command and interaction.command.name in ['disable', 'enable', 'features']:
+            return True
+            
+        # Check if command's feature is disabled
+        if interaction.command:
+            can_run = await disable.should_run_command(interaction.guild_id, interaction.command.name)
+            if not can_run:
+                await interaction.response.send_message(
+                    "❌ This feature is currently disabled in this server.",
+                    ephemeral=True
+                )
+                return False
         return True
 
 class PuddlesBot(commands.Bot):
@@ -472,6 +488,22 @@ class PuddlesBot(commands.Bot):
             logger.debug("Initializing database...")
             session = get_session('global')
             session.close()
+            
+            # Setup disable system
+            try:
+                disable.setup_disable_system(self)
+                disable.setup_disable_commands(self.tree)
+                print("✅ Disable system loaded")
+            except Exception as e:
+                print(f"⚠️ Disable system failed: {e}")
+            
+            # Setup OpenChat system
+            try:
+                openchat.setup_openchat_system(self)
+                openchat.setup_openchat_commands(self.tree)
+                print("✅ OpenChat system loaded")
+            except Exception as e:
+                print(f"⚠️ OpenChat system failed: {e}")
             
             # Setup non-music module systems with client references
             try:
@@ -1362,8 +1394,22 @@ class PuddlesBot(commands.Bot):
         if message.author.bot or not message.guild:
             return
             
-        # Skip the prefix message - it's handled by AI chat system now
-
+        # Handle AI chat bot mentions first
+        try:
+            handled = await puddleai.handle_bot_mention(message, self)
+            if handled:
+                return  # Don't process further if it was an AI response
+        except Exception as e:
+            print(f"Error in AI chat message handling: {e}")
+            
+        # Handle OpenChat messages
+        try:
+            handled = await openchat.handle_openchat_message(message)
+            if handled:
+                return  # Don't process further if it was an OpenChat message
+        except Exception as e:
+            print(f"Error in OpenChat message handling: {e}")
+        
         # Check for music request channel (Vocard functionality)
         if music_func and hasattr(music_func, 'settings'):
             try:
@@ -1401,14 +1447,6 @@ class PuddlesBot(commands.Bot):
         except Exception as e:
             print(f"Error in leveling message handling: {e}")
         
-        # Handle AI chat bot mentions
-        try:
-            handled = await puddleai.handle_bot_mention(message, self)
-            if handled:
-                return  # Don't process further if handled by AI chat
-        except Exception as e:
-            print(f"Error in AI chat message handling: {e}")
-            
         # Remove command processing since we're using slash commands
         # await self.process_commands(message)
 

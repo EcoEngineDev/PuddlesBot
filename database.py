@@ -1,6 +1,8 @@
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Float, Table, MetaData
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
 import sqlalchemy
@@ -9,6 +11,7 @@ import shutil
 import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 
 # Get the absolute path to the data directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -190,6 +193,20 @@ class MultidimensionalOptIn(Base):
     
     def __repr__(self):
         return f"<MultidimensionalOptIn(server_id='{self.server_id}', opted_in={self.opted_in})>"
+
+class DisabledFeatures(Base):
+    """Stores which features are disabled for each server"""
+    __tablename__ = 'disabled_features'
+    
+    id = Column(Integer, primary_key=True)
+    server_id = Column(String, nullable=False)
+    feature_name = Column(String, nullable=False)  # Name of the disabled feature/system
+    disabled_by = Column(String)  # Discord ID of admin who disabled it
+    disabled_at = Column(DateTime, default=datetime.utcnow)
+    reason = Column(String)  # Optional reason for disabling
+    
+    def __repr__(self):
+        return f"<DisabledFeatures(server='{self.server_id}', feature='{self.feature_name}')>"
 
 def get_db_path(server_id):
     return os.path.join(DATA_DIR, f"{server_id}.db")
@@ -439,3 +456,25 @@ def create_backup(server_id):
         backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith(f'{server_id}_backup_')])
         for old_backup in backups[:-5]:
             os.remove(os.path.join(BACKUP_DIR, old_backup)) 
+
+# Add async engine and session maker
+_async_engine = create_async_engine(
+    f'sqlite+aiosqlite:///{os.path.join(DATA_DIR, "global.db")}',
+    echo=False,
+    pool_pre_ping=True
+)
+
+async_session = sessionmaker(
+    _async_engine, 
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
+@asynccontextmanager
+async def get_async_session():
+    """Get an async database session."""
+    async with async_session() as session:
+        try:
+            yield session
+        finally:
+            await session.close() 
