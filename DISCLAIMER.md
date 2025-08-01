@@ -102,7 +102,7 @@ If you have concerns about AI responses or need to report problematic content, p
 
 **By using the AI chat feature, you acknowledge that you have read, understood, and agree to this disclaimer. You use the AI chat system at your own risk and responsibility.**
 
-*Last updated: January 2025* 
+*Last updated: July 2025* 
 
 ## 🛡️ Special Commands Notice
 
