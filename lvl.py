@@ -30,8 +30,10 @@ def log_command(func):
             print(f"Error in {func.__name__}:")
             print(traceback.format_exc())
             if not interaction.response.is_done():
+                import language
+                user_lang = language.get_server_language(interaction.guild_id)
                 await interaction.response.send_message(
-                    f"An error occurred while processing the command. Error: {str(e)}",
+                    language.get_text("error_general", user_lang, error=str(e)),
                     ephemeral=True
                 )
     return wrapper
@@ -605,6 +607,9 @@ def setup_level_commands(tree: app_commands.CommandTree):
     @app_commands.describe(user="The user to view (optional)")
     @log_command
     async def rank(interaction: discord.Interaction, user: Optional[discord.Member] = None):
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         target_user = user or interaction.user
         
         session = get_session(str(interaction.guild_id))
@@ -617,12 +622,12 @@ def setup_level_commands(tree: app_commands.CommandTree):
             if not user_level:
                 if target_user == interaction.user:
                     await interaction.response.send_message(
-                        "You haven't earned any XP yet! Start chatting to gain levels! 💬",
+                        language.get_text("leveling_no_xp", user_lang),
                         ephemeral=True
                     )
                 else:
                     await interaction.response.send_message(
-                        f"{target_user.display_name} hasn't earned any XP yet!",
+                        language.get_text("leveling_other_no_xp", user_lang, user_name=target_user.display_name),
                         ephemeral=True
                     )
                 return
@@ -638,7 +643,7 @@ def setup_level_commands(tree: app_commands.CommandTree):
             
             # Create beautiful rank card embed
             embed = discord.Embed(
-                title=f"📊 {target_user.display_name}'s Rank Card",
+                title=language.get_text("leveling_rank_title", user_lang, user_name=target_user.display_name),
                 color=discord.Color.from_rgb(114, 137, 218)
             )
             embed.set_thumbnail(url=target_user.display_avatar.url)
@@ -646,17 +651,17 @@ def setup_level_commands(tree: app_commands.CommandTree):
             # Server rank and total XP
             total_xp = user_level.text_xp + user_level.voice_xp
             embed.add_field(
-                name="🏆 Server Rank",
+                name=language.get_text("leveling_server_rank", user_lang),
                 value=f"**#{rank}** out of {len(all_users)} users",
                 inline=True
             )
             embed.add_field(
-                name="⭐ Total XP",
+                name=language.get_text("leveling_total_xp", user_lang),
                 value=f"**{total_xp:,}** XP",
                 inline=True
             )
             embed.add_field(
-                name="📈 Activity",
+                name=language.get_text("leveling_activity", user_lang),
                 value=f"**{user_level.total_messages:,}** messages\n**{user_level.total_voice_time:,}** min voice",
                 inline=True
             )
@@ -668,7 +673,7 @@ def setup_level_commands(tree: app_commands.CommandTree):
             text_progress_bar = create_progress_bar(text_progress_xp, text_level_xp_needed, 15)
             
             embed.add_field(
-                name="💬 Text Level",
+                name=language.get_text("leveling_text_level", user_lang),
                 value=f"**Level {text_level}**\n"
                       f"`{text_progress_bar}` {text_progress_xp}/{text_level_xp_needed}\n"
                       f"*{text_needed:,} XP to level {text_level + 1}*",
@@ -682,7 +687,7 @@ def setup_level_commands(tree: app_commands.CommandTree):
             voice_progress_bar = create_progress_bar(voice_progress_xp, voice_level_xp_needed, 15)
             
             embed.add_field(
-                name="🎙️ Voice Level", 
+                name=language.get_text("leveling_voice_level", user_lang), 
                 value=f"**Level {voice_level}**\n"
                       f"`{voice_progress_bar}` {voice_progress_xp}/{voice_level_xp_needed}\n"
                       f"*{voice_needed:,} XP to level {voice_level + 1}*",
@@ -691,13 +696,13 @@ def setup_level_commands(tree: app_commands.CommandTree):
             
             # Progress visualization
             embed.add_field(
-                name="📊 XP Breakdown",
+                name=language.get_text("leveling_xp_breakdown", user_lang),
                 value=f"💬 Text: **{user_level.text_xp:,}** XP\n"
                       f"🎙️ Voice: **{user_level.voice_xp:,}** XP",
                 inline=True
             )
             
-            embed.set_footer(text=f"Keep chatting and joining voice channels to level up! • {interaction.guild.name}")
+            embed.set_footer(text=language.get_text("leveling_footer", user_lang, server_name=interaction.guild.name))
             
             await interaction.response.send_message(embed=embed)
             

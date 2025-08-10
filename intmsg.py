@@ -34,8 +34,10 @@ def log_command(func: Callable) -> Callable:
             print(f"Error in {func.__name__}:")
             print(traceback.format_exc())
             if not interaction.response.is_done():
+                import language
+                user_lang = language.get_server_language(interaction.guild_id)
                 await interaction.response.send_message(
-                    f"An error occurred while processing the command. Error: {str(e)}",
+                    language.get_text("error_general", user_lang, error=str(e)),
                     ephemeral=True
                 )
     return wrapper
@@ -1222,12 +1224,13 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
     @log_command
     async def intmsg(interaction: discord.Interaction):
         """Create an interactive message with buttons for tickets and roles"""
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         # Check if user can create interactive messages
         if not await can_create_intmsg(interaction):
             await interaction.response.send_message(
-                "❌ You don't have permission to create interactive messages!\n\n"
-                "Only administrators or whitelisted users can use this command.\n"
-                "Ask an admin to add you with `/imw add @user`",
+                language.get_text("intmsg_no_permission", user_lang),
                 ephemeral=True
             )
             return
@@ -1236,10 +1239,7 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
         await start_intmsg_conversation(interaction)
         
         await interaction.response.send_message(
-            f"🎨 **Interactive Message Creator Started!** {interaction.user.mention}\n\n"
-            "I'll guide you through creating your interactive message. You can cancel anytime by typing `cancel`.\n\n"
-            "**Step 1/7:** What should the **title** of your message be?\n"
-            "👆 **Please reply to this message in this channel with your title!**",
+            language.get_text("intmsg_creation_started", user_lang, user=interaction.user.mention),
             ephemeral=False  # Make it visible so user knows where to respond
         )
 
@@ -1255,9 +1255,12 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
     @log_command
     async def imw(interaction: discord.Interaction, user: discord.Member, action: str):
         """Manage interactive message creator whitelist"""
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         if action.lower() not in ['add', 'remove']:
             await interaction.response.send_message(
-                "❌ Invalid action! Use 'add' or 'remove'.",
+                language.get_text("imw_invalid_action", user_lang),
                 ephemeral=True
             )
             return
@@ -1272,7 +1275,7 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
             if action.lower() == 'add':
                 if existing_creator:
                     await interaction.response.send_message(
-                        f"❌ {user.display_name} is already in the interactive message creator whitelist!",
+                        language.get_text("imw_already_whitelisted", user_lang, user_name=user.display_name),
                         ephemeral=True
                     )
                     return
@@ -1286,15 +1289,14 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
                 session.commit()
                 
                 await interaction.response.send_message(
-                    f"✅ Added {user.display_name} to the interactive message creator whitelist!\n"
-                    f"They can now use `/intmsg` to create interactive messages.",
+                    language.get_text("imw_added", user_lang, user_name=user.display_name),
                     ephemeral=True
                 )
                 
             else:  # remove
                 if not existing_creator:
                     await interaction.response.send_message(
-                        f"❌ {user.display_name} is not in the interactive message creator whitelist!",
+                        language.get_text("imw_not_whitelisted", user_lang, user_name=user.display_name),
                         ephemeral=True
                     )
                     return
@@ -1303,8 +1305,7 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
                 session.commit()
                 
                 await interaction.response.send_message(
-                    f"✅ Removed {user.display_name} from the interactive message creator whitelist!\n"
-                    f"They can no longer use `/intmsg` (unless they're an admin).",
+                    language.get_text("imw_removed", user_lang, user_name=user.display_name),
                     ephemeral=True
                 )
                 
@@ -1312,7 +1313,7 @@ def setup_intmsg_commands(tree: app_commands.CommandTree):
             print(f"Error in imw command: {str(e)}")
             print(traceback.format_exc())
             await interaction.response.send_message(
-                f"An error occurred while updating the whitelist: {str(e)}",
+                language.get_text("imw_error", user_lang, error=str(e)),
                 ephemeral=True
             )
         finally:

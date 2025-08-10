@@ -198,3 +198,5 @@ db.sqlite3-journal
 # Sentry Config
 .sentryclirc
 models/mistral-7b-instruct-v0.1.Q4_K_M.gguf
+models/llama-2-7b-chat.Q4_K_M.gguf
+models/mistral-7b-instruct-v0.2.Q4_K_M.gguf

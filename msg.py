@@ -21,8 +21,10 @@ def log_command(func):
             print(f"Error in {func.__name__}:")
             print(traceback.format_exc())
             if not interaction.response.is_done():
+                import language
+                user_lang = language.get_server_language(interaction.guild_id)
                 await interaction.response.send_message(
-                    f"An error occurred while processing the command. Error: {str(e)}",
+                    language.get_text("error_general", user_lang, error=str(e)),
                     ephemeral=True
                 )
     return wrapper
@@ -41,12 +43,15 @@ def setup_msg_commands(tree: app_commands.CommandTree):
     @log_command
     async def msg(interaction: discord.Interaction, channel: discord.TextChannel):
         """Wait for the next message from the user and send it to the specified channel"""
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         try:
             # Check if the bot has permission to send messages in the target channel
             permissions = channel.permissions_for(interaction.guild.me)
             if not permissions.send_messages:
                 await interaction.response.send_message(
-                    f"❌ I don't have permission to send messages in {channel.mention}!",
+                    language.get_text("msg_no_permission", user_lang, channel_mention=channel.mention),
                     ephemeral=True
                 )
                 return
@@ -54,17 +59,13 @@ def setup_msg_commands(tree: app_commands.CommandTree):
             # Check if bot has permission to attach files (for image support)
             if not permissions.attach_files:
                 await interaction.response.send_message(
-                    f"❌ I don't have permission to attach files in {channel.mention}!\n"
-                    f"Text messages will work, but images won't be forwarded.",
+                    language.get_text("msg_file_permission", user_lang, channel_mention=channel.mention),
                     ephemeral=True
                 )
             
             # Initial response to let the user know we're waiting
             await interaction.response.send_message(
-                f"✅ **Ready to forward to {channel.mention}**\n\n"
-                f"📝 **Send your next message now** (text, images, or both)\n"
-                f"⏱️ You have **60 seconds** to send your message\n"
-                f"❌ **To cancel**, type `cancel`",
+                language.get_text("ready_to_forward", user_lang, channel=channel.mention),
                 ephemeral=True
             )
             
@@ -78,7 +79,7 @@ def setup_msg_commands(tree: app_commands.CommandTree):
                 user_message = await interaction.client.wait_for('message', check=check, timeout=60.0)
             except asyncio.TimeoutError:
                 await interaction.followup.send(
-                    "❌ **Timeout!** You didn't send a message within 60 seconds. Command cancelled.",
+                    language.get_text("timeout_message", user_lang),
                     ephemeral=True
                 )
                 return
@@ -87,7 +88,7 @@ def setup_msg_commands(tree: app_commands.CommandTree):
             if user_message.content.lower().strip() == 'cancel':
                 await user_message.delete()
                 await interaction.followup.send(
-                    "❌ **Cancelled!** No message was sent.",
+                    language.get_text("cancelled_message", user_lang),
                     ephemeral=True
                 )
                 return
@@ -96,7 +97,7 @@ def setup_msg_commands(tree: app_commands.CommandTree):
             if not user_message.content.strip() and not user_message.attachments:
                 await user_message.delete()
                 await interaction.followup.send(
-                    "❌ **Empty message!** Please send a message with content or attachments.",
+                    language.get_text("empty_message", user_lang),
                     ephemeral=True
                 )
                 return
@@ -105,8 +106,7 @@ def setup_msg_commands(tree: app_commands.CommandTree):
             if len(user_message.content) > 2000:
                 await user_message.delete()
                 await interaction.followup.send(
-                    f"❌ **Message too long!** ({len(user_message.content)}/2000 characters)\n"
-                    f"Please shorten your message by {len(user_message.content) - 2000} characters.",
+                    language.get_text("message_too_long", user_lang, length=len(user_message.content), difference=len(user_message.content) - 2000),
                     ephemeral=True
                 )
                 return
@@ -145,59 +145,59 @@ def setup_msg_commands(tree: app_commands.CommandTree):
             
             # Confirm to the admin
             embed = discord.Embed(
-                title="✅ Message Forwarded",
-                description=f"Message successfully sent to {channel.mention}",
+                title=language.get_text("msg_forwarded_title", user_lang),
+                description=language.get_text("msg_forwarded_description", user_lang, channel_mention=channel.mention),
                 color=discord.Color.green()
             )
             embed.add_field(
-                name="Target Channel",
+                name=language.get_text("msg_target_channel", user_lang),
                 value=f"{channel.mention} (#{channel.name})",
                 inline=True
             )
             
             if user_message.content.strip():
                 embed.add_field(
-                    name="Message Length",
+                    name=language.get_text("msg_message_length", user_lang),
                     value=f"{len(user_message.content)} characters",
                     inline=True
                 )
                 embed.add_field(
-                    name="Message Preview",
+                    name=language.get_text("msg_message_preview", user_lang),
                     value=f"```{user_message.content[:200]}{'...' if len(user_message.content) > 200 else ''}```",
                     inline=False
                 )
             
             if attachment_info:
                 embed.add_field(
-                    name="Attachments",
+                    name=language.get_text("msg_attachments", user_lang),
                     value="\n".join(attachment_info),
                     inline=False
                 )
             
             embed.add_field(
-                name="Message Link",
-                value=f"[Jump to message]({sent_message.jump_url})",
+                name=language.get_text("msg_message_link", user_lang),
+                value=f"[{language.get_text('msg_jump_to_message', user_lang)}]({sent_message.jump_url})",
                 inline=False
             )
-            embed.set_footer(text=f"Forwarded by {interaction.user.display_name}")
+            embed.set_footer(text=language.get_text("msg_forwarded_by", user_lang, user=interaction.user.display_name))
             
             await interaction.followup.send(embed=embed, ephemeral=True)
             
         except discord.Forbidden:
             await interaction.followup.send(
-                f"❌ I don't have permission to send messages in {channel.mention}!",
+                language.get_text("msg_no_permission", user_lang, channel_mention=channel.mention),
                 ephemeral=True
             )
         except discord.NotFound:
             await interaction.followup.send(
-                "❌ The specified channel was not found!",
+                language.get_text("msg_channel_not_found", user_lang),
                 ephemeral=True
             )
         except Exception as e:
             print(f"Error in msg command: {str(e)}")
             print(traceback.format_exc())
             await interaction.followup.send(
-                f"❌ An error occurred while forwarding the message: {str(e)}",
+                language.get_text("msg_forward_error", user_lang, error=str(e)),
                 ephemeral=True
             )
 

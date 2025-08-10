@@ -53,21 +53,29 @@ def setup_dice_commands(tree: app_commands.CommandTree):
     async def diceroll(interaction: discord.Interaction, number_of_dice: int, sides: int = 6):
         """Roll dice and display results visually"""
         
+        # Get user's language preference
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         # Validate input
         if number_of_dice < 1:
-            await interaction.response.send_message("❌ You need to roll at least 1 die!", ephemeral=True)
+            error_msg = language.get_text("dice_roll_min_error", user_lang)
+            await interaction.response.send_message(error_msg, ephemeral=True)
             return
         
         if number_of_dice > 1000000000:
-            await interaction.response.send_message("❌ Maximum 1,000,000,000 dice allowed!", ephemeral=True)
+            error_msg = language.get_text("dice_roll_max_error", user_lang)
+            await interaction.response.send_message(error_msg, ephemeral=True)
             return
         
         if sides < 2:
-            await interaction.response.send_message("❌ Dice must have at least 2 sides!", ephemeral=True)
+            error_msg = language.get_text("dice_sides_min_error", user_lang)
+            await interaction.response.send_message(error_msg, ephemeral=True)
             return
         
         if sides > 100:
-            await interaction.response.send_message("❌ Maximum 100 sides allowed per die!", ephemeral=True)
+            error_msg = language.get_text("dice_sides_max_error", user_lang)
+            await interaction.response.send_message(error_msg, ephemeral=True)
             return
         
         # Check cooldown for large rolls
@@ -80,10 +88,8 @@ def setup_dice_commands(tree: app_commands.CommandTree):
                 if time_left > 0:
                     minutes = int(time_left // 60)
                     seconds = int(time_left % 60)
-                    await interaction.response.send_message(
-                        f"⏰ Cooldown active! You can roll large numbers again in {minutes}m {seconds}s",
-                        ephemeral=True
-                    )
+                    cooldown_msg = language.get_text("dice_roll_cooldown", user_lang, minutes=minutes, seconds=seconds)
+                    await interaction.response.send_message(cooldown_msg, ephemeral=True)
                     return
             
             # Set cooldown for 2 minutes
@@ -203,8 +209,9 @@ def setup_dice_commands(tree: app_commands.CommandTree):
                 lowest = 1
             
             # Create embed
+            title_text = language.get_text("dice_roll_title", user_lang)
             embed = discord.Embed(
-                title=f"🎲 Dice Roll Results ({sides}-sided)",
+                title=f"{title_text} ({sides}-sided)",
                 color=discord.Color.random()
             )
             

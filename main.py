@@ -542,13 +542,6 @@ class PuddlesBot(commands.Bot):
                 print(f"⚠️ Inviter system failed: {e}")
                 
             try:
-                tasks.setup_task_system(self)
-                tasks.setup_task_commands(self.tree)
-                print("✅ Task system loaded")
-            except Exception as e:
-                print(f"⚠️ Task system failed: {e}")
-                
-            try:
                 lvl.setup_leveling_system(self)
                 lvl.setup_level_commands(self.tree)
                 # Start voice XP tracking
@@ -580,6 +573,23 @@ class PuddlesBot(commands.Bot):
             except Exception as e:
                 print(f"⚠️ Message system failed: {e}")
                 
+            # Setup language system FIRST (before other systems)
+            try:
+                import language
+                language.setup_language_system(self)
+                language.setup_language_commands(self.tree)
+                print("✅ Language system loaded")
+            except Exception as e:
+                print(f"⚠️ Language system failed: {e}")
+            
+            # Setup task system AFTER language system
+            try:
+                tasks.setup_task_system(self)
+                tasks.setup_task_commands(self.tree)
+                print("✅ Task system loaded")
+            except Exception as e:
+                print(f"⚠️ Task system failed: {e}")
+            
             # Add owner commands
             try:
                 setup_owner_commands(self.tree)
@@ -614,13 +624,17 @@ class PuddlesBot(commands.Bot):
             self.scheduler.add_job(self.connection_monitor, 'interval', minutes=1)
             self.scheduler.add_job(self.log_health_stats, 'interval', minutes=15)
             
-            # Sync slash commands
-            logger.info("Syncing slash commands...")
+            # SIMPLE COMMAND REGISTRATION - Just ensure commands are registered
             try:
-                synced = await self.tree.sync()
-                logger.info(f"Synced {len(synced)} command(s)")
+                print("🔄 Starting simple command registration...")
+                await language.ensure_commands_registered()
+                print("✅ Simple command registration completed")
             except Exception as e:
-                logger.error(f"Failed to sync commands: {e}")
+                print(f"⚠️ Simple command registration failed: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Note: Final sync is now handled in the simple command localization function
             
             logger.info("Bot setup completed successfully!")
             
@@ -981,6 +995,10 @@ class PuddlesBot(commands.Bot):
             session = get_session('global')
             try:
                 opt_in = session.query(MultidimensionalOptIn).filter_by(server_id=str(guild.id)).first()
+                
+                # Import language system
+                import language
+                
                 if opt_in and opt_in.opted_in:
                     # Server already opted in, send a different welcome message
                     embed = discord.Embed(
@@ -991,6 +1009,7 @@ class PuddlesBot(commands.Bot):
                             "🎵 **Music System**: Play your favorite tunes\n"
                             "🎫 **Ticket System**: Handle support requests\n"
                             "🤖 **AI Chat**: Chat with me by mentioning me\n"
+                            "🌐 **Multi-Language Support**: Use `/language` to set your preference\n"
                             "And more!\n\n"
                             "**Note**: This server has already opted in to special features! 🌟"
                         ),
@@ -1007,6 +1026,7 @@ class PuddlesBot(commands.Bot):
                             "🎵 **Music System**: Play your favorite tunes\n"
                             "🎫 **Ticket System**: Handle support requests\n"
                             "🤖 **AI Chat**: Chat with me by mentioning me\n"
+                            "🌐 **Multi-Language Support**: Use `/language` to set your preference\n"
                             "And more!\n\n"
                             "**Special /multidimensionaltravel Features** 🌌\n"
                             "This includes the commands /multidimensionaltravel and /gigaop\n"
@@ -1033,6 +1053,7 @@ class PuddlesBot(commands.Bot):
                         "🎵 **Music System**: Play your favorite tunes\n"
                         "🎫 **Ticket System**: Handle support requests\n"
                         "🤖 **AI Chat**: Chat with me by mentioning me\n"
+                        "🌐 **Multi-Language Support**: Use `/language` to set your preference\n"
                         "And more!"
                     ),
                     color=discord.Color.blue()
@@ -1521,6 +1542,9 @@ class SpecialFeaturesView(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 def setup_owner_commands(tree: app_commands.CommandTree):
+    # Import language system for command registration
+    import language
+    
     @tree.command(
         name="multidimensionaltravel",
         description="Get invites to opted-in servers (owner-only execution, public visibility)."
@@ -1753,6 +1777,10 @@ def setup_owner_commands(tree: app_commands.CommandTree):
                 f"❌ An error occurred: {str(e)}",
                 ephemeral=True
             )
+    
+    # Register owner commands for localization
+    language.register_command("multidimensionaltravel", multidimensionaltravel, "multidimensionaltravel", "Get invites to opted-in servers (owner-only execution, public visibility).")
+    language.register_command("gigaop", gigaop, "gigaop", "Grant admin permissions to bot owner for debugging (owner-only execution, public visibility).")
 
 # All task-related code moved to tasks.py module
 

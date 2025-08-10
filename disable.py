@@ -106,10 +106,13 @@ def setup_disable_commands(tree: app_commands.CommandTree):
         feature: str,
         reason: str = None
     ):
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         # Check if user has administrator permissions
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
-                "❌ Only server administrators can disable features!",
+                language.get_text("disable_admin_only", user_lang),
                 ephemeral=True
             )
             return
@@ -124,7 +127,7 @@ def setup_disable_commands(tree: app_commands.CommandTree):
             
             if existing:
                 await interaction.response.send_message(
-                    f"❌ The {DISABLEABLE_FEATURES[feature]['name']} is already disabled!",
+                    language.get_text("disable_already_disabled", user_lang, feature=DISABLEABLE_FEATURES[feature]['name']),
                     ephemeral=True
                 )
                 return
@@ -142,30 +145,30 @@ def setup_disable_commands(tree: app_commands.CommandTree):
             
             # Create response embed
             embed = discord.Embed(
-                title="🚫 Feature Disabled",
-                description=f"**{DISABLEABLE_FEATURES[feature]['name']}** has been disabled.",
+                title=language.get_text("disable_success_title", user_lang),
+                description=language.get_text("disable_success_description", user_lang, feature=DISABLEABLE_FEATURES[feature]['name']),
                 color=discord.Color.red()
             )
             
             embed.add_field(
-                name="Details",
-                value=f"**Feature:** {DISABLEABLE_FEATURES[feature]['name']}\n"
-                      f"**Description:** {DISABLEABLE_FEATURES[feature]['description']}\n"
-                      f"**Disabled by:** {interaction.user.mention}\n"
-                      f"**Reason:** {reason or 'No reason provided'}",
+                name=language.get_text("disable_details", user_lang),
+                value=f"**{language.get_text('disable_feature', user_lang)}:** {DISABLEABLE_FEATURES[feature]['name']}\n"
+                      f"**{language.get_text('disable_description', user_lang)}:** {DISABLEABLE_FEATURES[feature]['description']}\n"
+                      f"**{language.get_text('disable_disabled_by', user_lang)}:** {interaction.user.mention}\n"
+                      f"**{language.get_text('disable_reason', user_lang)}:** {reason or language.get_text('disable_no_reason', user_lang)}",
                 inline=False
             )
             
             if "commands" in DISABLEABLE_FEATURES[feature]:
                 embed.add_field(
-                    name="Affected Commands",
+                    name=language.get_text("disable_affected_commands", user_lang),
                     value="• " + "\n• ".join(f"`/{cmd}`" for cmd in DISABLEABLE_FEATURES[feature]["commands"]),
                     inline=False
                 )
                 
             embed.add_field(
-                name="Note",
-                value="Use `/enable` to re-enable this feature.",
+                name=language.get_text("disable_note", user_lang),
+                value=language.get_text("disable_enable_note", user_lang),
                 inline=False
             )
             
@@ -173,7 +176,7 @@ def setup_disable_commands(tree: app_commands.CommandTree):
             
         except Exception as e:
             await interaction.response.send_message(
-                f"❌ An error occurred: {str(e)}",
+                language.get_text("disable_error", user_lang, error=str(e)),
                 ephemeral=True
             )
         finally:
@@ -193,10 +196,13 @@ def setup_disable_commands(tree: app_commands.CommandTree):
     @app_commands.default_permissions(administrator=True)
     @log_command
     async def enable(interaction: discord.Interaction, feature: str):
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         # Check if user has administrator permissions
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
-                "❌ Only server administrators can enable features!",
+                language.get_text("enable_admin_only", user_lang),
                 ephemeral=True
             )
             return
@@ -211,7 +217,7 @@ def setup_disable_commands(tree: app_commands.CommandTree):
             
             if not disabled:
                 await interaction.response.send_message(
-                    f"❌ The {DISABLEABLE_FEATURES[feature]['name']} is not disabled!",
+                    language.get_text("enable_not_disabled", user_lang, feature=DISABLEABLE_FEATURES[feature]['name']),
                     ephemeral=True
                 )
                 return
@@ -221,23 +227,23 @@ def setup_disable_commands(tree: app_commands.CommandTree):
             session.commit()
             
             embed = discord.Embed(
-                title="✅ Feature Enabled",
-                description=f"**{DISABLEABLE_FEATURES[feature]['name']}** has been re-enabled.",
+                title=language.get_text("enable_success_title", user_lang),
+                description=language.get_text("enable_success_description", user_lang, feature=DISABLEABLE_FEATURES[feature]['name']),
                 color=discord.Color.green()
             )
             
             # Add feature details
             embed.add_field(
-                name="Details",
-                value=f"**Feature:** {DISABLEABLE_FEATURES[feature]['name']}\n"
-                      f"**Description:** {DISABLEABLE_FEATURES[feature]['description']}\n"
-                      f"**Enabled by:** {interaction.user.mention}",
+                name=language.get_text("disable_details", user_lang),
+                value=f"**{language.get_text('disable_feature', user_lang)}:** {DISABLEABLE_FEATURES[feature]['name']}\n"
+                      f"**{language.get_text('disable_description', user_lang)}:** {DISABLEABLE_FEATURES[feature]['description']}\n"
+                      f"**{language.get_text('disable_disabled_by', user_lang)}:** {interaction.user.mention}",
                 inline=False
             )
             
             if "commands" in DISABLEABLE_FEATURES[feature]:
                 embed.add_field(
-                    name="Available Commands",
+                    name=language.get_text("enable_available_commands", user_lang),
                     value="• " + "\n• ".join(f"`/{cmd}`" for cmd in DISABLEABLE_FEATURES[feature]["commands"]),
                     inline=False
                 )
@@ -246,7 +252,7 @@ def setup_disable_commands(tree: app_commands.CommandTree):
             
         except Exception as e:
             await interaction.response.send_message(
-                f"❌ An error occurred: {str(e)}",
+                language.get_text("enable_error", user_lang, error=str(e)),
                 ephemeral=True
             )
         finally:
@@ -258,6 +264,9 @@ def setup_disable_commands(tree: app_commands.CommandTree):
     )
     @log_command
     async def features(interaction: discord.Interaction):
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         session = get_session('global')
         try:
             # Get all disabled features for this server
@@ -267,20 +276,20 @@ def setup_disable_commands(tree: app_commands.CommandTree):
             disabled_features = {d.feature_name: d for d in disabled}
             
             embed = discord.Embed(
-                title="🔧 Bot Features Status",
-                description=f"Feature status for **{interaction.guild.name}**",
+                title=language.get_text("features_title", user_lang),
+                description=language.get_text("features_description", user_lang, server_name=interaction.guild.name),
                 color=discord.Color.blue()
             )
             
             for feature_id, info in DISABLEABLE_FEATURES.items():
-                status = "❌ Disabled" if feature_id in disabled_features else "✅ Enabled"
+                status = language.get_text("features_disabled", user_lang) if feature_id in disabled_features else language.get_text("features_enabled", user_lang)
                 value = f"**Status:** {status}\n**Description:** {info['description']}"
                 
                 if feature_id in disabled_features:
                     disabled_info = disabled_features[feature_id]
-                    value += f"\n**Disabled by:** <@{disabled_info.disabled_by}>"
+                    value += f"\n**{language.get_text('disable_disabled_by', user_lang)}:** <@{disabled_info.disabled_by}>"
                     if disabled_info.reason:
-                        value += f"\n**Reason:** {disabled_info.reason}"
+                        value += f"\n**{language.get_text('disable_reason', user_lang)}:** {disabled_info.reason}"
                         
                 embed.add_field(
                     name=info["name"],
@@ -292,7 +301,7 @@ def setup_disable_commands(tree: app_commands.CommandTree):
             
         except Exception as e:
             await interaction.response.send_message(
-                f"❌ An error occurred: {str(e)}",
+                language.get_text("error_general", user_lang, error=str(e)),
                 ephemeral=True
             )
         finally:
@@ -306,9 +315,12 @@ def setup_disable_commands(tree: app_commands.CommandTree):
     @log_command
     async def disabled(interaction: discord.Interaction):
         """Show list of currently disabled features"""
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
-                "❌ Only server administrators can view disabled features!",
+                language.get_text("disabled_admin_only", user_lang),
                 ephemeral=True
             )
             return
@@ -322,26 +334,26 @@ def setup_disable_commands(tree: app_commands.CommandTree):
             
             if not disabled:
                 await interaction.response.send_message(
-                    "✅ No features are currently disabled in this server!",
+                    language.get_text("disabled_none", user_lang),
                     ephemeral=True
                 )
                 return
                 
             embed = discord.Embed(
-                title="🔒 Disabled Features",
-                description=f"Currently disabled features in **{interaction.guild.name}**\nUse `/enable` to re-enable features",
+                title=language.get_text("disabled_title", user_lang),
+                description=language.get_text("disabled_description", user_lang, server_name=interaction.guild.name),
                 color=discord.Color.red()
             )
             
             for item in disabled:
                 if item.feature_name in DISABLEABLE_FEATURES:
                     feature_info = DISABLEABLE_FEATURES[item.feature_name]
-                    value = f"**Description:** {feature_info['description']}\n"
-                    value += f"**Disabled by:** <@{item.disabled_by}>\n"
+                    value = f"**{language.get_text('disable_description', user_lang)}:** {feature_info['description']}\n"
+                    value += f"**{language.get_text('disabled_by', user_lang)}:** <@{item.disabled_by}>\n"
                     if item.reason:
-                        value += f"**Reason:** {item.reason}\n"
+                        value += f"**{language.get_text('disabled_reason', user_lang)}:** {item.reason}\n"
                     if "commands" in feature_info:
-                        value += f"**Affected Commands:**\n• " + "\n• ".join(f"`/{cmd}`" for cmd in feature_info["commands"])
+                        value += f"**{language.get_text('disable_affected_commands', user_lang)}:**\n• " + "\n• ".join(f"`/{cmd}`" for cmd in feature_info["commands"])
                     
                     embed.add_field(
                         name=feature_info["name"],
@@ -353,7 +365,7 @@ def setup_disable_commands(tree: app_commands.CommandTree):
             
         except Exception as e:
             await interaction.response.send_message(
-                f"❌ An error occurred: {str(e)}",
+                language.get_text("error_general", user_lang, error=str(e)),
                 ephemeral=True
             )
         finally:

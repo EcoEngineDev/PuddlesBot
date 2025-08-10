@@ -36,9 +36,12 @@ class ImageRevealButton(discord.ui.Button):
         self.image_url = image_url
 
     async def callback(self, interaction: discord.Interaction):
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         embed = discord.Embed(color=discord.Color.blue())
         embed.set_image(url=self.image_url)
-        embed.set_footer(text="⚠️ Image content is not moderated. Report violations to server staff.")
+        embed.set_footer(text=language.get_text("openchat_image_warning", user_lang))
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class OpenChatView(discord.ui.View):
@@ -80,14 +83,19 @@ def log_command(func):
             print(f"Error in {func.__name__}:")
             print(traceback.format_exc())
             if not interaction.response.is_done():
+                import language
+                user_lang = language.get_server_language(interaction.guild_id)
                 await interaction.response.send_message(
-                    f"An error occurred while processing the command. Error: {str(e)}",
+                    language.get_text("error_general", user_lang, error=str(e)),
                     ephemeral=True
                 )
     return wrapper
 
 async def handle_openchat_message(message: discord.Message):
     """Process messages in OpenChat channels"""
+    import language
+    user_lang = language.get_server_language(message.guild.id)
+    
     if not message.guild or message.author.bot:
         return False
 
@@ -123,20 +131,20 @@ async def handle_openchat_message(message: discord.Message):
                     # For images, add to list for reveal buttons
                     image_urls.append(attachment.url)
                     embed.add_field(
-                        name=f"📎 Image Attachment {idx + 1}",
-                        value="Click the button below to view the image",
+                        name=language.get_text("openchat_image_attachment", user_lang, index=idx + 1),
+                        value=language.get_text("openchat_click_to_view", user_lang),
                         inline=False
                     )
                 else:
                     # For other files, show warning and link
                     embed.add_field(
-                        name=f"⚠️ File Attachment {idx + 1}",
+                        name=language.get_text("openchat_file_attachment", user_lang, index=idx + 1),
                         value=(
                             f"**{attachment.filename}**\n"
-                            f"[Click to Download]({attachment.url})\n\n"
-                            "**⚠️ SECURITY WARNING:**\n"
-                            "WE DO NOT SCAN FILES FOR MALWARE.\n"
-                            "DOWNLOAD AND USE FILES AT YOUR OWN RISK!"
+                            f"[{language.get_text('openchat_click_to_download', user_lang)}]({attachment.url})\n\n"
+                            f"**{language.get_text('openchat_security_warning', user_lang)}:**\n"
+                            f"{language.get_text('openchat_no_scan_warning', user_lang)}\n"
+                            f"{language.get_text('openchat_download_risk', user_lang)}"
                         ),
                         inline=False
                     )
@@ -221,14 +229,17 @@ def setup_openchat_commands(tree):
     ])
     @log_command
     async def openchat(interaction: discord.Interaction, action: str):
+        import language
+        user_lang = language.get_server_language(interaction.guild_id)
+        
         if not interaction.guild:
-            await interaction.response.send_message("This command can only be used in servers!", ephemeral=True)
+            await interaction.response.send_message(language.get_text("openchat_servers_only", user_lang), ephemeral=True)
             return
 
         # Check if OpenChat is disabled for this server
         if await disable.is_feature_disabled(interaction.guild.id, "openchat"):
             await interaction.response.send_message(
-                "❌ The OpenChat system is currently disabled in this server. Ask an admin to use `/enable openchat` to enable it.",
+                language.get_text("openchat_disabled", user_lang),
                 ephemeral=True
             )
             return
@@ -236,7 +247,7 @@ def setup_openchat_commands(tree):
         if action == "clear":
             # Only admins can clear the database
             if not interaction.user.guild_permissions.administrator:
-                await interaction.response.send_message("❌ Only administrators can clear OpenChat data!", ephemeral=True)
+                await interaction.response.send_message(language.get_text("openchat_clear_admin_only", user_lang), ephemeral=True)
                 return
 
             await interaction.response.defer(ephemeral=True)
@@ -253,16 +264,14 @@ def setup_openchat_commands(tree):
                     await session.commit()
 
                 await interaction.followup.send(
-                    "✅ OpenChat data cleared successfully!\n"
-                    "• All channel settings have been reset\n"
-                    "• Use `/openchat enable` to set up OpenChat in a channel",
+                    language.get_text("openchat_clear_success", user_lang),
                     ephemeral=True
                 )
             except Exception as e:
                 print(f"Error clearing OpenChat data: {e}")
                 traceback.print_exc()
                 await interaction.followup.send(
-                    "❌ An error occurred while clearing OpenChat data.",
+                    language.get_text("openchat_clear_error", user_lang),
                     ephemeral=True
                 )
             return
@@ -273,7 +282,7 @@ def setup_openchat_commands(tree):
             if existing_channel:
                 channel = interaction.guild.get_channel(int(existing_channel))
                 await interaction.response.send_message(
-                    f"❌ OpenChat is already enabled in {channel.mention if channel else 'another channel'}!",
+                    language.get_text("openchat_already_enabled", user_lang, channel_mention=channel.mention if channel else language.get_text("openchat_another_channel", user_lang)),
                     ephemeral=True
                 )
                 return
@@ -307,25 +316,14 @@ def setup_openchat_commands(tree):
             # Send success message in channel
             await interaction.channel.send(
                 embed=discord.Embed(
-                    title="🌐 OpenChat Enabled!",
-                    description=(
-                        "This channel is now connected to other servers' OpenChat channels!\n\n"
-                        "**Features:**\n"
-                        "• Messages here are shared with other OpenChat channels\n"
-                        "• Images require clicking a button to view (for safety)\n"
-                        "• Files show security warnings before download\n\n"
-                        "**Rules:**\n"
-                        "• No NSFW content\n"
-                        "• Follow Discord's Terms of Service\n"
-                        "• Be respectful to other servers\n\n"
-                        "**Note:** Anyone can disable OpenChat in this channel, and admins can disable it server-wide with `/disable openchat`"
-                    ),
+                    title=language.get_text("openchat_enabled_title", user_lang),
+                    description=language.get_text("openchat_enabled_description", user_lang),
                     color=discord.Color.green()
                 )
             )
 
             await interaction.response.send_message(
-                "✅ OpenChat enabled successfully!",
+                language.get_text("openchat_enabled_success", user_lang),
                 ephemeral=True
             )
 
@@ -333,7 +331,7 @@ def setup_openchat_commands(tree):
             # Check if this is the active OpenChat channel
             if active_channels.get(str(interaction.guild.id)) != str(interaction.channel.id):
                 await interaction.response.send_message(
-                    "❌ OpenChat is not enabled in this channel!",
+                    language.get_text("openchat_not_enabled", user_lang),
                     ephemeral=True
                 )
                 return
@@ -351,14 +349,14 @@ def setup_openchat_commands(tree):
             # Send notification in channel
             await interaction.channel.send(
                 embed=discord.Embed(
-                    title="🔒 OpenChat Disabled",
-                    description="This channel is no longer connected to the OpenChat network.",
+                    title=language.get_text("openchat_disabled_title", user_lang),
+                    description=language.get_text("openchat_disabled_description", user_lang),
                     color=discord.Color.red()
                 )
             )
 
             await interaction.response.send_message(
-                "✅ OpenChat disabled successfully!",
+                language.get_text("openchat_disabled_success", user_lang),
                 ephemeral=True
             )
 
@@ -367,12 +365,12 @@ def setup_openchat_commands(tree):
             if channel_id:
                 channel = interaction.guild.get_channel(int(channel_id))
                 await interaction.response.send_message(
-                    f"OpenChat is currently enabled in {channel.mention if channel else 'another channel'}",
+                    language.get_text("openchat_status_enabled", user_lang, channel_mention=channel.mention if channel else language.get_text("openchat_another_channel", user_lang)),
                     ephemeral=True
                 )
             else:
                 await interaction.response.send_message(
-                    "OpenChat is not currently enabled in any channel",
+                    language.get_text("openchat_status_disabled", user_lang),
                     ephemeral=True
                 )
 
