@@ -15,6 +15,34 @@ import re
 # Store reference to the client
 _client = None
 
+def format_time_difference(start_time, end_time):
+    """Format the difference between two datetime objects into a human-readable string"""
+    if not start_time or not end_time:
+        return "Unknown"
+    
+    diff = end_time - start_time
+    total_seconds = int(diff.total_seconds())
+    
+    if total_seconds < 60:
+        return f"{total_seconds} seconds"
+    elif total_seconds < 3600:
+        minutes = total_seconds // 60
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    elif total_seconds < 86400:
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        if minutes > 0:
+            return f"{hours} hour{'s' if hours != 1 else ''} {minutes} minute{'s' if minutes != 1 else ''}"
+        else:
+            return f"{hours} hour{'s' if hours != 1 else ''}"
+    else:
+        days = total_seconds // 86400
+        hours = (total_seconds % 86400) // 3600
+        if hours > 0:
+            return f"{days} day{'s' if days != 1 else ''} {hours} hour{'s' if hours != 1 else ''}"
+        else:
+            return f"{days} day{'s' if days != 1 else ''}"
+
 def setup_task_system(client):
     """Initialize the task system with client reference"""
     global _client
@@ -229,22 +257,190 @@ class UserButton(discord.ui.Button):
 
 class TaskView(discord.ui.View):
     def __init__(self, tasks, user):
-        super().__init__(timeout=180)  # 3 minute timeout
+        super().__init__(timeout=600)  # 10 minute timeout
         self.tasks = tasks
         self.user = user
         self.selected_task = None
+        self.current_page = 0
+        self.max_per_page = 25
+        self.start_time = datetime.utcnow()
+        
+        # Add task selection dropdown and navigation buttons
+        server_id = str(user.guild.id) if hasattr(user, 'guild') and user.guild else None
+        self.server_id = server_id
+        self.update_view()
+    
+    async def on_timeout(self):
+        """Called when the view times out"""
+        try:
+            # Create a new view with just a refresh button
+            refresh_view = discord.ui.View()
+            refresh_button = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label="🔄 Refresh Tasks",
+                custom_id="refresh_tasks"
+            )
+            
+            async def refresh_callback(interaction: discord.Interaction):
+                # Re-run the mytasks command
+                session = get_session(str(interaction.guild_id))
+                try:
+                    # Query for tasks where user ID appears in the comma-separated assigned_to field
+                    user_id = str(interaction.user.id)
+                    tasks = session.query(Task).filter(
+                        Task.assigned_to.like(f'%{user_id}%'),
+                        Task.completed == False
+                    ).order_by(Task.due_date).all()
+                    
+                    # Filter to ensure exact match (avoid partial ID matches)
+                    filtered_tasks = []
+                    for task in tasks:
+                        assigned_ids = task.assigned_to.split(',') if task.assigned_to else []
+                        if user_id in assigned_ids:
+                            filtered_tasks.append(task)
+                    
+                    if not filtered_tasks:
+                        await interaction.response.send_message(
+                            "You have no pending tasks! 🎉",
+                            ephemeral=True
+                        )
+                        return
+                    
+                    # Create new task view
+                    new_view = TaskView(filtered_tasks, interaction.user)
+                    await interaction.response.send_message(
+                        "Here are your tasks:",
+                        view=new_view,
+                        ephemeral=True
+                    )
+                    
+                finally:
+                    session.close()
+            
+            refresh_button.callback = refresh_callback
+            refresh_view.add_item(refresh_button)
+            
+            # Create timeout embed with more helpful message
+            embed = discord.Embed(
+                title="⏰ Session Timed Out",
+                description=(
+                    "This task view has timed out after 10 minutes of inactivity.\n\n"
+                    "You can:\n"
+                    "• Click the 'Refresh Tasks' button below to see your tasks again\n"
+                    "• Use `/mytasks` to start a new session\n"
+                    "• Use `/help task` to learn more about task management"
+                ),
+                color=discord.Color.orange()  # Changed to orange for warning
+            )
+            
+            # Try to edit the message if possible
+            if hasattr(self, 'message') and self.message:
+                try:
+                    await self.message.edit(embed=embed, view=refresh_view)
+                except discord.NotFound:
+                    pass  # Message was deleted
+                except discord.HTTPException:
+                    pass  # Other HTTP errors
+        except Exception as e:
+            print(f"Error in timeout handler: {str(e)}")  # Log error but don't expose to user
+    
+    def update_view(self):
+        """Update the view with current page items and timeout indicator"""
+        self.clear_items()
+        
+        # Calculate remaining time
+        elapsed = (datetime.utcnow() - self.start_time).total_seconds()
+        remaining = max(0, self.timeout - elapsed)
+        minutes = int(remaining // 60)
+        seconds = int(remaining % 60)
         
         # Add task selection dropdown
-        server_id = str(user.guild.id) if hasattr(user, 'guild') and user.guild else None
-        self.add_item(TaskSelect(tasks, server_id))
+        self.add_item(TaskSelect(self.tasks, self.server_id, self.current_page))
+        
+        # Add complete task button
+        complete_button = CompleteTaskButton()
+        # Enable the button if a task is selected
+        complete_button.disabled = not bool(self.selected_task)
+        self.add_item(complete_button)
+        
+        # Calculate total pages
+        total_pages = (len(self.tasks) + self.max_per_page - 1) // self.max_per_page
+        
+        # Add navigation buttons if needed
+        if total_pages > 1:
+            # Previous page button
+            prev_button = discord.ui.Button(
+                label="◀ Previous",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page == 0),
+                row=1
+            )
+            prev_button.callback = self.previous_page
+            self.add_item(prev_button)
+            
+            # Page info button (non-functional, just shows info)
+            page_info = discord.ui.Button(
+                label=f"Page {self.current_page + 1}/{total_pages}",
+                style=discord.ButtonStyle.secondary,
+                disabled=True,
+                row=1
+            )
+            self.add_item(page_info)
+            
+            # Next page button
+            next_button = discord.ui.Button(
+                label="Next ▶",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page >= total_pages - 1),
+                row=1
+            )
+            next_button.callback = self.next_page
+            self.add_item(next_button)
+        
+    
+    async def previous_page(self, interaction: discord.Interaction):
+        """Go to previous page"""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.selected_task = None  # Reset selection when changing pages
+            self.update_view()
+            
+            embed = discord.Embed(
+                title="📋 Task List",
+                description=f"Select a task to view details. Showing page {self.current_page + 1}.",
+                color=discord.Color.blue()
+            )
+            await interaction.response.edit_message(embed=embed, view=self)
+    
+    async def next_page(self, interaction: discord.Interaction):
+        """Go to next page"""
+        total_pages = (len(self.tasks) + self.max_per_page - 1) // self.max_per_page
+        if self.current_page < total_pages - 1:
+            self.current_page += 1
+            self.selected_task = None  # Reset selection when changing pages
+            self.update_view()
+            
+            embed = discord.Embed(
+                title="📋 Task List",
+                description=f"Select a task to view details. Showing page {self.current_page + 1}.",
+                color=discord.Color.blue()
+            )
+            await interaction.response.edit_message(embed=embed, view=self)
 
 class TaskSelect(discord.ui.Select):
-    def __init__(self, tasks, server_id: str = None):
+    def __init__(self, tasks, server_id: str = None, page: int = 0):
         self.task_list = tasks
         self.server_id = server_id
+        self.page = page
+        self.max_per_page = 25  # Discord's limit
+        
+        # Calculate pagination
+        start_idx = page * self.max_per_page
+        end_idx = start_idx + self.max_per_page
+        page_tasks = tasks[start_idx:end_idx]
         
         options = []
-        for task in tasks:
+        for task in page_tasks:
             if server_id:
                 due_date_str = format_task_date(task.due_date, server_id, False)
             else:
@@ -255,8 +451,17 @@ class TaskSelect(discord.ui.Select):
                 value=str(task.id),
                 description=f"Due: {due_date_str}"[:100]
             ))
+            
+        # Ensure we have at least one option to prevent errors
+        if not options:
+            options.append(discord.SelectOption(
+                label="No tasks available",
+                value="0",
+                description="No tasks found"
+            ))
+            
         super().__init__(
-            placeholder="Choose a task to view details...",
+            placeholder=f"Choose a task to view details... (Page {page + 1})",
             min_values=1,
             max_values=1,
             options=options
@@ -264,6 +469,12 @@ class TaskSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         view: TaskView = self.view
+        
+        # Handle "no tasks available" case
+        if self.values[0] == "0":
+            await interaction.response.send_message("No tasks available to select!", ephemeral=True)
+            return
+            
         session = get_session(str(interaction.guild_id))
         try:
             task_id = int(self.values[0])
@@ -275,9 +486,15 @@ class TaskSelect(discord.ui.Select):
             view.selected_task = task
             
             # Create embed with task details
+            # Calculate remaining time
+            elapsed = (datetime.utcnow() - view.start_time).total_seconds()
+            remaining = max(0, view.timeout - elapsed)
+            minutes = int(remaining // 60)
+            seconds = int(remaining % 60)
+            
             embed = discord.Embed(
                 title=f"Task: {task.name}",
-                description=task.description,
+                description=f"{task.description}\n\n⏰ Time remaining: {minutes}m {seconds}s",
                 color=discord.Color.blue()
             )
             
@@ -302,16 +519,8 @@ class TaskSelect(discord.ui.Select):
                 inline=False
             )
 
-            # Update the complete button state
-            complete_button = None
-            for item in view.children:
-                if isinstance(item, CompleteTaskButton):
-                    complete_button = item
-                    complete_button.disabled = False
-                    break
-            
-            if not complete_button:
-                view.add_item(CompleteTaskButton())
+            # Update the view to show the complete button
+            view.update_view()
 
             await interaction.response.edit_message(embed=embed, view=view)
         
@@ -329,8 +538,9 @@ class CompleteTaskButton(discord.ui.Button):
     def __init__(self):
         super().__init__(
             style=discord.ButtonStyle.success,
-            label="Complete Task",
-            disabled=True  # Disabled by default until a task is selected
+            label="✅ Complete Task",
+            disabled=True,  # Disabled by default until a task is selected
+            row=2  # Put on a separate row from navigation
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -361,10 +571,22 @@ class CompleteTaskButton(discord.ui.Button):
                 task.completed_at = get_current_utc()
                 session.commit()
                 
+                # Create success embed with more details
                 embed = discord.Embed(
-                    title="✅ Task Completed",
-                    description=f"Task '{task.name}' has been marked as complete!",
+                    title="✅ Task Completed Successfully!",
+                    description=f"Task '{task.name}' has been marked as complete!\n\n"
+                              f"**Description:** {task.description}\n"
+                              f"**Completed by:** {interaction.user.mention}\n"
+                              f"**Completed at:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
                     color=discord.Color.green()
+                )
+                
+                # Add completion stats
+                embed.add_field(
+                    name="📊 Task Stats",
+                    value=f"**Time to complete:** {format_time_difference(task.created_at, datetime.utcnow())}\n"
+                          f"**Status:** Completed on time ✨" if datetime.utcnow() <= task.due_date else "**Status:** Completed late ⚠️",
+                    inline=False
                 )
                 
                 # Disable the complete button and dropdown
@@ -391,12 +613,19 @@ class CompleteTaskButton(discord.ui.Button):
             session.close()
 
 class TaskEditSelect(discord.ui.Select):
-    def __init__(self, tasks, server_id: str = None):
+    def __init__(self, tasks, server_id: str = None, page: int = 0):
         self.task_list = tasks
         self.server_id = server_id
+        self.page = page
+        self.max_per_page = 25  # Discord's limit
+        
+        # Calculate pagination
+        start_idx = page * self.max_per_page
+        end_idx = start_idx + self.max_per_page
+        page_tasks = tasks[start_idx:end_idx]
         
         options = []
-        for task in tasks:
+        for task in page_tasks:
             if server_id:
                 due_date_str = format_task_date(task.due_date, server_id, False)
             else:
@@ -407,8 +636,17 @@ class TaskEditSelect(discord.ui.Select):
                 value=str(task.id),
                 description=f"Due: {due_date_str}"[:100]
             ))
+            
+        # Ensure we have at least one option to prevent errors
+        if not options:
+            options.append(discord.SelectOption(
+                label="No tasks available",
+                value="0",
+                description="No tasks found"
+            ))
+            
         super().__init__(
-            placeholder="Choose a task to edit...",
+            placeholder=f"Choose a task to edit... (Page {page + 1})",
             min_values=1,
             max_values=1,
             options=options
@@ -416,6 +654,12 @@ class TaskEditSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         view: TaskEditView = self.view
+        
+        # Handle "no tasks available" case
+        if self.values[0] == "0":
+            await interaction.response.send_message("No tasks available to select!", ephemeral=True)
+            return
+            
         task_id = int(self.values[0])
         
         # Find the selected task
@@ -431,10 +675,8 @@ class TaskEditSelect(discord.ui.Select):
         
         view.selected_task = selected_task
         
-        # Enable all edit buttons
-        for item in view.children:
-            if isinstance(item, discord.ui.Button):
-                item.disabled = False
+        # Update the view to enable edit buttons
+        view.update_view()
         
         embed = discord.Embed(
             title=f"Editing Task: {selected_task.name}",
@@ -450,10 +692,211 @@ class TaskEditView(discord.ui.View):
         self.tasks = tasks
         self.user = user
         self.selected_task = None
+        self.current_page = 0
+        self.max_per_page = 25
+        
+        # Add task selection dropdown and navigation buttons
+        server_id = str(user.guild.id) if hasattr(user, 'guild') and user.guild else None
+        self.server_id = server_id
+        self.update_view()
+    
+    async def on_timeout(self):
+        """Called when the view times out"""
+        try:
+            # Disable all items
+            for item in self.children:
+                item.disabled = True
+            
+            # Create timeout embed
+            embed = discord.Embed(
+                title="⏰ Session Timed Out",
+                description="This window has timed out. To see it again use the command `/taskedit`",
+                color=discord.Color.red()
+            )
+            
+            # Try to edit the message if possible
+            if hasattr(self, 'message') and self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except discord.NotFound:
+                    pass  # Message was deleted
+                except discord.HTTPException:
+                    pass  # Other HTTP errors
+        except Exception:
+            pass  # Silently fail to avoid errors in timeout handling
+    
+    def update_view(self):
+        """Update the view with current page items"""
+        self.clear_items()
         
         # Add task selection dropdown
-        server_id = str(user.guild.id) if hasattr(user, 'guild') and user.guild else None
-        self.add_item(TaskEditSelect(tasks, server_id))
+        self.add_item(TaskEditSelect(self.tasks, self.server_id, self.current_page))
+        
+        # Calculate total pages
+        total_pages = (len(self.tasks) + self.max_per_page - 1) // self.max_per_page
+        
+        # Add navigation buttons if needed (row 1 to avoid conflict with dropdown)
+        if total_pages > 1:
+            # Previous page button
+            prev_button = discord.ui.Button(
+                label="◀ Previous",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page == 0),
+                row=1
+            )
+            prev_button.callback = self.previous_page
+            self.add_item(prev_button)
+            
+            # Page info button (non-functional, just shows info)
+            page_info = discord.ui.Button(
+                label=f"Page {self.current_page + 1}/{total_pages}",
+                style=discord.ButtonStyle.secondary,
+                disabled=True,
+                row=1
+            )
+            self.add_item(page_info)
+            
+            # Next page button
+            next_button = discord.ui.Button(
+                label="Next ▶",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page >= total_pages - 1),
+                row=1
+            )
+            next_button.callback = self.next_page
+            self.add_item(next_button)
+        
+        # Add edit buttons (disabled until task is selected)
+        self.add_edit_buttons()
+    
+    def add_edit_buttons(self):
+        """Add the edit buttons to the view"""
+        # Calculate total pages to determine if navigation buttons are present
+        total_pages = (len(self.tasks) + self.max_per_page - 1) // self.max_per_page
+        
+        # Adjust row numbers based on whether navigation buttons are present
+        start_row = 2 if total_pages > 1 else 1
+        
+        # Row start_row: Name and Due Date edit buttons
+        edit_name_btn = discord.ui.Button(
+            label="Edit Name",
+            style=discord.ButtonStyle.primary,
+            disabled=(self.selected_task is None),
+            row=start_row
+        )
+        edit_name_btn.callback = self.edit_name_callback
+        self.add_item(edit_name_btn)
+        
+        edit_due_date_btn = discord.ui.Button(
+            label="Edit Due Date",
+            style=discord.ButtonStyle.primary,
+            disabled=(self.selected_task is None),
+            row=start_row
+        )
+        edit_due_date_btn.callback = self.edit_due_date_callback
+        self.add_item(edit_due_date_btn)
+        
+        # Row start_row+1: Description and Assignee edit buttons
+        edit_desc_btn = discord.ui.Button(
+            label="Edit Description",
+            style=discord.ButtonStyle.primary,
+            disabled=(self.selected_task is None),
+            row=start_row + 1
+        )
+        edit_desc_btn.callback = self.edit_description_callback
+        self.add_item(edit_desc_btn)
+        
+        edit_assignee_btn = discord.ui.Button(
+            label="Change Assignee",
+            style=discord.ButtonStyle.primary,
+            disabled=(self.selected_task is None),
+            row=start_row + 1
+        )
+        edit_assignee_btn.callback = self.edit_assignee_callback
+        self.add_item(edit_assignee_btn)
+        
+        # Row start_row+2: Delete button
+        delete_btn = discord.ui.Button(
+            label="🗑️ Delete Task",
+            style=discord.ButtonStyle.danger,
+            disabled=(self.selected_task is None),
+            row=start_row + 2
+        )
+        delete_btn.callback = self.delete_task_callback
+        self.add_item(delete_btn)
+    
+    async def previous_page(self, interaction: discord.Interaction):
+        """Go to previous page"""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.selected_task = None  # Reset selection when changing pages
+            self.update_view()
+            
+            embed = discord.Embed(
+                title="✏️ Edit Tasks",
+                description=f"Select a task to edit from the dropdown below. Showing page {self.current_page + 1}.",
+                color=discord.Color.orange()
+            )
+            await interaction.response.edit_message(embed=embed, view=self)
+    
+    async def next_page(self, interaction: discord.Interaction):
+        """Go to next page"""
+        total_pages = (len(self.tasks) + self.max_per_page - 1) // self.max_per_page
+        if self.current_page < total_pages - 1:
+            self.current_page += 1
+            self.selected_task = None  # Reset selection when changing pages
+            self.update_view()
+            
+            embed = discord.Embed(
+                title="✏️ Edit Tasks",
+                description=f"Select a task to edit from the dropdown below. Showing page {self.current_page + 1}.",
+                color=discord.Color.orange()
+            )
+            await interaction.response.edit_message(embed=embed, view=self)
+    
+    async def edit_name_callback(self, interaction: discord.Interaction):
+        if self.selected_task:
+            modal = TaskEditModal(self.selected_task, "name")
+            await interaction.response.send_modal(modal)
+    
+    async def edit_due_date_callback(self, interaction: discord.Interaction):
+        if self.selected_task:
+            modal = TaskEditModal(self.selected_task, "due_date")
+            await interaction.response.send_modal(modal)
+    
+    async def edit_description_callback(self, interaction: discord.Interaction):
+        if self.selected_task:
+            modal = TaskEditModal(self.selected_task, "description")
+            await interaction.response.send_modal(modal)
+    
+    async def edit_assignee_callback(self, interaction: discord.Interaction):
+        if self.selected_task:
+            modal = TaskEditModal(self.selected_task, "assigned_to")
+            await interaction.response.send_modal(modal)
+    
+    async def delete_task_callback(self, interaction: discord.Interaction):
+        if self.selected_task:
+            # Show confirmation modal
+            view = TaskDeleteConfirmView(self.selected_task)
+            embed = discord.Embed(
+                title="⚠️ Confirm Task Deletion",
+                description=f"Are you sure you want to delete the task **{self.selected_task.name}**?\n\n"
+                           f"**This action cannot be undone!**",
+                color=discord.Color.red()
+            )
+            # Show multiple assignees
+            if self.selected_task.assigned_to:
+                assigned_ids = self.selected_task.assigned_to.split(',')
+                assigned_mentions = ', '.join([f"<@{uid.strip()}>" for uid in assigned_ids])
+            else:
+                assigned_mentions = "Unknown"
+                
+            embed.add_field(name="Task Details", 
+                          value=f"**Assigned to:** {assigned_mentions}\n"
+                                f"**Due:** {self.selected_task.due_date.strftime('%Y-%m-%d %H:%M UTC')}\n"
+                                f"**Description:** {self.selected_task.description}", 
+                          inline=False)
+            await interaction.response.edit_message(embed=embed, view=view)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """Ensure only the user who initiated the edit can use the buttons"""
@@ -518,6 +961,31 @@ class TaskDeleteConfirmView(discord.ui.View):
     def __init__(self, task: Task):
         super().__init__(timeout=60)  # 1 minute timeout for safety
         self.task = task
+    
+    async def on_timeout(self):
+        """Called when the view times out"""
+        try:
+            # Disable all items
+            for item in self.children:
+                item.disabled = True
+            
+            # Create timeout embed
+            embed = discord.Embed(
+                title="⏰ Deletion Confirmation Timed Out",
+                description="The deletion confirmation has timed out. To delete this task, use `/taskedit` again.",
+                color=discord.Color.red()
+            )
+            
+            # Try to edit the message if possible
+            if hasattr(self, 'message') and self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except discord.NotFound:
+                    pass  # Message was deleted
+                except discord.HTTPException:
+                    pass  # Other HTTP errors
+        except Exception:
+            pass  # Silently fail to avoid errors in timeout handling
 
     @discord.ui.button(label="✅ Confirm Delete", style=discord.ButtonStyle.danger)
     async def confirm_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -560,10 +1028,8 @@ class TaskDeleteConfirmView(discord.ui.View):
         view = TaskEditView([self.task], interaction.user)
         view.selected_task = self.task
         
-        # Enable all edit buttons since a task is selected
-        for item in view.children:
-            if isinstance(item, discord.ui.Button):
-                item.disabled = False
+        # Update the view to enable edit buttons since a task is selected
+        view.update_view()
         
         embed = discord.Embed(
             title=f"Editing Task: {self.task.name}",
@@ -729,6 +1195,31 @@ class PaginatedTaskView(discord.ui.View):
         # Update button states
         self.update_buttons()
     
+    async def on_timeout(self):
+        """Called when the view times out"""
+        try:
+            # Disable all items
+            for item in self.children:
+                item.disabled = True
+            
+            # Create timeout embed
+            embed = discord.Embed(
+                title="⏰ Session Timed Out",
+                description="This window has timed out. To see it again use the command `/alltasks`",
+                color=discord.Color.red()
+            )
+            
+            # Try to edit the message if possible
+            if hasattr(self, 'message') and self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except discord.NotFound:
+                    pass  # Message was deleted
+                except discord.HTTPException:
+                    pass  # Other HTTP errors
+        except Exception:
+            pass  # Silently fail to avoid errors in timeout handling
+    
     def update_buttons(self):
         # Update Previous button
         self.previous_button.disabled = (self.current_page == 0)
@@ -825,6 +1316,31 @@ class PaginatedCompletedTaskView(discord.ui.View):
         
         # Update button states
         self.update_buttons()
+    
+    async def on_timeout(self):
+        """Called when the view times out"""
+        try:
+            # Disable all items
+            for item in self.children:
+                item.disabled = True
+            
+            # Create timeout embed
+            embed = discord.Embed(
+                title="⏰ Session Timed Out",
+                description="This window has timed out. To see it again use the command `/oldtasks @user`",
+                color=discord.Color.red()
+            )
+            
+            # Try to edit the message if possible
+            if hasattr(self, 'message') and self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except discord.NotFound:
+                    pass  # Message was deleted
+                except discord.HTTPException:
+                    pass  # Other HTTP errors
+        except Exception:
+            pass  # Silently fail to avoid errors in timeout handling
     
     def update_buttons(self):
         # Update Previous button
@@ -1105,18 +1621,123 @@ class SnipeTaskView(discord.ui.View):
         self.tasks = tasks
         self.user = user
         self.selected_task = None
+        self.current_page = 0
+        self.max_per_page = 25
+        
+        # Add task selection dropdown and navigation buttons
+        server_id = str(user.guild.id) if hasattr(user, 'guild') and user.guild else None
+        self.server_id = server_id
+        self.update_view()
+    
+    async def on_timeout(self):
+        """Called when the view times out"""
+        try:
+            # Disable all items
+            for item in self.children:
+                item.disabled = True
+            
+            # Create timeout embed
+            embed = discord.Embed(
+                title="⏰ Session Timed Out",
+                description="This window has timed out. To see it again use the command `/snipe`",
+                color=discord.Color.red()
+            )
+            
+            # Try to edit the message if possible
+            if hasattr(self, 'message') and self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except discord.NotFound:
+                    pass  # Message was deleted
+                except discord.HTTPException:
+                    pass  # Other HTTP errors
+        except Exception:
+            pass  # Silently fail to avoid errors in timeout handling
+    
+    def update_view(self):
+        """Update the view with current page items"""
+        self.clear_items()
         
         # Add task selection dropdown
-        server_id = str(user.guild.id) if hasattr(user, 'guild') and user.guild else None
-        self.add_item(SnipeTaskSelect(tasks, server_id))
+        self.add_item(SnipeTaskSelect(self.tasks, self.server_id, self.current_page))
+        
+        # Calculate total pages
+        total_pages = (len(self.tasks) + self.max_per_page - 1) // self.max_per_page
+        
+        # Add navigation buttons if needed
+        if total_pages > 1:
+            # Previous page button
+            prev_button = discord.ui.Button(
+                label="◀ Previous",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page == 0),
+                row=1
+            )
+            prev_button.callback = self.previous_page
+            self.add_item(prev_button)
+            
+            # Page info button (non-functional, just shows info)
+            page_info = discord.ui.Button(
+                label=f"Page {self.current_page + 1}/{total_pages}",
+                style=discord.ButtonStyle.secondary,
+                disabled=True,
+                row=1
+            )
+            self.add_item(page_info)
+            
+            # Next page button
+            next_button = discord.ui.Button(
+                label="Next ▶",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page >= total_pages - 1),
+                row=1
+            )
+            next_button.callback = self.next_page
+            self.add_item(next_button)
+    
+    async def previous_page(self, interaction: discord.Interaction):
+        """Go to previous page"""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.selected_task = None  # Reset selection when changing pages
+            self.update_view()
+            
+            embed = discord.Embed(
+                title="🎯 Snipe Tasks",
+                description=f"Select a task to claim credit for. Showing page {self.current_page + 1}.",
+                color=discord.Color.orange()
+            )
+            await interaction.response.edit_message(embed=embed, view=self)
+    
+    async def next_page(self, interaction: discord.Interaction):
+        """Go to next page"""
+        total_pages = (len(self.tasks) + self.max_per_page - 1) // self.max_per_page
+        if self.current_page < total_pages - 1:
+            self.current_page += 1
+            self.selected_task = None  # Reset selection when changing pages
+            self.update_view()
+            
+            embed = discord.Embed(
+                title="🎯 Snipe Tasks",
+                description=f"Select a task to claim credit for. Showing page {self.current_page + 1}.",
+                color=discord.Color.orange()
+            )
+            await interaction.response.edit_message(embed=embed, view=self)
 
 class SnipeTaskSelect(discord.ui.Select):
-    def __init__(self, tasks, server_id: str = None):
+    def __init__(self, tasks, server_id: str = None, page: int = 0):
         self.task_list = tasks
         self.server_id = server_id
+        self.page = page
+        self.max_per_page = 25  # Discord's limit
+        
+        # Calculate pagination
+        start_idx = page * self.max_per_page
+        end_idx = start_idx + self.max_per_page
+        page_tasks = tasks[start_idx:end_idx]
         
         options = []
-        for task in tasks:
+        for task in page_tasks:
             if server_id:
                 due_date_str = format_task_date(task.due_date, server_id, False)
             else:
@@ -1127,8 +1748,17 @@ class SnipeTaskSelect(discord.ui.Select):
                 value=str(task.id),
                 description=f"Due: {due_date_str} | Assigned to: {getattr(task, '_assigned_name', 'Unknown')}"[:100]
             ))
+            
+        # Ensure we have at least one option to prevent errors
+        if not options:
+            options.append(discord.SelectOption(
+                label="No tasks available",
+                value="0",
+                description="No tasks found"
+            ))
+            
         super().__init__(
-            placeholder="Choose a task to snipe...",
+            placeholder=f"Choose a task to snipe... (Page {page + 1})",
             min_values=1,
             max_values=1,
             options=options
@@ -1136,6 +1766,12 @@ class SnipeTaskSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         view: SnipeTaskView = self.view
+        
+        # Handle "no tasks available" case
+        if self.values[0] == "0":
+            await interaction.response.send_message("No tasks available to select!", ephemeral=True)
+            return
+            
         task_id = int(self.values[0])
         
         # Find the selected task
@@ -1292,10 +1928,12 @@ class SnipeCancelButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         # Go back to task selection
         view = SnipeTaskView(self.tasks, interaction.user)
+        total_pages = (len(self.tasks) + 25 - 1) // 25  # 25 is max_per_page
         embed = discord.Embed(
             title="🎯 Snipe a Task",
             description=f"Select a task that you've completed but aren't assigned to.\n"
-                       f"Found {len(self.tasks)} available tasks to snipe.",
+                       f"Found {len(self.tasks)} available tasks to snipe." + 
+                       (f"\nShowing page 1 of {total_pages}." if total_pages > 1 else ""),
             color=discord.Color.blue()
         )
         await interaction.response.edit_message(embed=embed, view=view)
@@ -1679,12 +2317,23 @@ def setup_task_commands(tree: app_commands.CommandTree):
                 
                 view = TaskView(filtered_tasks, interaction.user)
                 await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+                
+                # Store message reference for timeout handling
+                try:
+                    view.message = await interaction.original_response()
+                except:
+                    pass  # Silently fail if we can't get the message
             else:
                 # Multiple tasks - show list view
                 view = TaskView(filtered_tasks, interaction.user)
+                
+                # Calculate pagination info
+                total_pages = (len(filtered_tasks) + 25 - 1) // 25  # 25 is max_per_page
+                
                 embed = discord.Embed(
                     title=f"📋 Your Tasks ({len(filtered_tasks)})",
-                    description="Select a task below to view details and mark as complete:",
+                    description="Select a task below to view details and mark as complete:" +
+                               (f"\nShowing page 1 of {total_pages}." if total_pages > 1 else ""),
                     color=discord.Color.blue()
                 )
                 
@@ -1700,6 +2349,12 @@ def setup_task_commands(tree: app_commands.CommandTree):
                     embed.set_footer(text=f"Showing first 5 tasks. Use the dropdown to see all {len(filtered_tasks)} tasks.")
                 
                 await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+                
+                # Store message reference for timeout handling
+                try:
+                    view.message = await interaction.original_response()
+                except:
+                    pass  # Silently fail if we can't get the message
                 
         except Exception as e:
             print(f"Error in mytasks command: {str(e)}")
@@ -1750,6 +2405,12 @@ def setup_task_commands(tree: app_commands.CommandTree):
             embed.set_footer(text=permission_text)
             
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            
+            # Store message reference for timeout handling
+            try:
+                view.message = await interaction.original_response()
+            except:
+                pass  # Silently fail if we can't get the message
             
         except Exception as e:
             print(f"Error in taskedit command: {str(e)}")
@@ -2141,8 +2802,35 @@ def setup_task_commands(tree: app_commands.CommandTree):
             # Add current page select
             if chunks:
                 current_chunk = chunks[page] if page < len(chunks) else chunks[0]
-                select = TimezoneSelect(current_chunk, f"{region} - Page {page + 1}/{len(chunks)}")
-                self.add_item(select)
+        
+        async def on_timeout(self):
+            """Called when the view times out"""
+            try:
+                # Disable all items
+                for item in self.children:
+                    item.disabled = True
+                
+                # Create timeout embed
+                embed = discord.Embed(
+                    title="⏰ Session Timed Out",
+                    description="This window has timed out. To see it again use the command `/settimezone`",
+                    color=discord.Color.red()
+                )
+                
+                # Try to edit the message if possible
+                if hasattr(self, 'message') and self.message:
+                    try:
+                        await self.message.edit(embed=embed, view=self)
+                    except discord.NotFound:
+                        pass  # Message was deleted
+                    except discord.HTTPException:
+                        pass  # Other HTTP errors
+            except Exception:
+                pass  # Silently fail to avoid errors in timeout handling
+        
+            # Add select and navigation buttons to the view
+            select = TimezoneSelect(current_chunk, f"{region} - Page {page + 1}/{len(chunks)}")
+            self.add_item(select)
             
             # Add navigation buttons if multiple pages
             if self.total_pages > 1:
@@ -2322,6 +3010,31 @@ def setup_task_commands(tree: app_commands.CommandTree):
         def __init__(self):
             super().__init__(timeout=300)
             self.add_item(TimezoneRegionSelect())
+        
+        async def on_timeout(self):
+            """Called when the view times out"""
+            try:
+                # Disable all items
+                for item in self.children:
+                    item.disabled = True
+                
+                # Create timeout embed
+                embed = discord.Embed(
+                    title="⏰ Session Timed Out",
+                    description="This window has timed out. To see it again use the command `/settimezone`",
+                    color=discord.Color.red()
+                )
+                
+                # Try to edit the message if possible
+                if hasattr(self, 'message') and self.message:
+                    try:
+                        await self.message.edit(embed=embed, view=self)
+                    except discord.NotFound:
+                        pass  # Message was deleted
+                    except discord.HTTPException:
+                        pass  # Other HTTP errors
+            except Exception:
+                pass  # Silently fail to avoid errors in timeout handling
 
     @tree.command(
         name="snipe",
@@ -2394,15 +3107,26 @@ def setup_task_commands(tree: app_commands.CommandTree):
                     task._assigned_name = "Unknown"
 
             view = SnipeTaskView(tasks, interaction.user)
+            
+            # Calculate pagination info
+            total_pages = (len(tasks) + 25 - 1) // 25  # 25 is max_per_page
+            
             embed = discord.Embed(
                 title="🎯 Snipe a Task",
                 description=f"Select a task that you've completed but aren't assigned to.\n"
-                           f"Found **{len(tasks)}** available tasks to snipe.\n\n"
-                           f"**Note:** Snipe requests require admin approval.",
+                           f"Found **{len(tasks)}** available tasks to snipe." +
+                           (f"\nShowing page 1 of {total_pages}." if total_pages > 1 else "") + 
+                           f"\n\n**Note:** Snipe requests require admin approval.",
                 color=discord.Color.blue()
             )
             
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            
+            # Store message reference for timeout handling
+            try:
+                view.message = await interaction.original_response()
+            except:
+                pass  # Silently fail if we can't get the message
             
         except Exception as e:
             print(f"Error in snipe command: {str(e)}")
@@ -2565,6 +3289,12 @@ def setup_task_commands(tree: app_commands.CommandTree):
             )
             
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            
+            # Store message reference for timeout handling
+            try:
+                view.message = await interaction.original_response()
+            except:
+                pass  # Silently fail if we can't get the message
             
         except Exception as e:
             await interaction.response.send_message(

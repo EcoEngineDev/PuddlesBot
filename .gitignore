@@ -200,3 +200,15 @@ db.sqlite3-journal
 models/mistral-7b-instruct-v0.1.Q4_K_M.gguf
 models/llama-2-7b-chat.Q4_K_M.gguf
 models/mistral-7b-instruct-v0.2.Q4_K_M.gguf
+data.zip
+WEB_UI_README.md
+__pycache__/main.cpython-310.pyc
+COMMAND_LOGGING_SOLUTION.md
+COMMAND_LOGGING_FIXES.md
+GLOBAL_COMMAND_LOGGING_SOLUTION.md
+guild_cache.json
+__pycache__/main.cpython-310.pyc
+__pycache__/main.cpython-310.pyc
+__pycache__/main.cpython-310.pyc
+*.pyc
+*.pyc

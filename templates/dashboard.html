@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PuddlesBot Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000000;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .status-card {
+            text-align: center;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+
+        .status-running {
+            background: #4CAF50;
+            box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+        }
+
+        .status-stopped {
+            background: #f44336;
+            box-shadow: 0 0 10px rgba(244, 67, 54, 0.5);
+        }
+
+        .bot-info {
+            margin: 20px 0;
+            text-align: left;
+        }
+
+        .bot-info div {
+            margin: 10px 0;
+            padding: 8px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .btn-start {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-stop {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-restart {
+            background: #ff9800;
+            color: white;
+        }
+
+        .btn-refresh {
+            background: #2196F3;
+            color: white;
+            margin-right: 10px;
+        }
+        
+        .btn-danger {
+            background: #f44336;
+            color: white;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .stat-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .command-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .command-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            margin: 5px 0;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .server-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .server-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            margin: 8px 0;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .server-name {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .server-id {
+            font-size: 0.8rem;
+            color: #666;
+        }
+
+        .server-commands {
+            background: #667eea;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+
+        .last-updated {
+            text-align: center;
+            color: #666;
+            font-size: 0.9rem;
+            margin-top: 20px;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .loading {
+            animation: pulse 1.5s infinite;
+        }
+
+        .no-data {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+            padding: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .controls {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🦆 PuddlesBot Dashboard</h1>
+            <p>Monitor your Discord bot statistics and performance</p>
+        </div>
+
+        <div class="dashboard">
+            <!-- Bot Status Card -->
+            <div class="card status-card">
+                <h2>🤖 Bot Status</h2>
+                <div class="bot-status">
+                    {% if bot_status.running %}
+                        <div style="font-size: 1.2rem; margin-bottom: 20px;">
+                            <span class="status-indicator status-running"></span>
+                            <strong>RUNNING</strong>
+                        </div>
+                        <div class="bot-info">
+                            <div><strong>PID:</strong> {{ bot_status.pid }}</div>
+                            <div><strong>Memory:</strong> {{ bot_status.memory_mb }} MB</div>
+                            <div><strong>CPU:</strong> {{ bot_status.cpu_percent }}%</div>
+                            <div><strong>Uptime:</strong> <span id="uptime">{{ "%.1f"|format(bot_status.uptime / 3600) }} hours</span></div>
+                        </div>
+                    {% else %}
+                        <div style="font-size: 1.2rem; margin-bottom: 20px;">
+                            <span class="status-indicator status-stopped"></span>
+                            <strong>STOPPED</strong>
+                        </div>
+                    {% endif %}
+                </div>
+                
+                <div class="controls">
+                    <button class="btn btn-refresh" onclick="refreshStats()">
+                        📊 Refresh Stats
+                    </button>
+                    <button class="btn btn-danger" onclick="resetData()">
+                        🗑️ Reset All Data
+                    </button>
+                </div>
+            </div>
+
+            <!-- Server Commands Card -->
+            <div class="card">
+                <h2>🌐 Server Command Usage</h2>
+                <div class="server-list">
+                    {% if stats.server_commands %}
+                        {% for server_id, count in stats.server_commands.items() %}
+                        <div class="server-item">
+                            <div>
+                                <div class="server-name">
+                                    {{ server_names.get(server_id, 'Unknown Server') }}
+                                </div>
+                                <div class="server-id">ID: {{ server_id }}</div>
+                            </div>
+                            <div class="server-commands">{{ count }}</div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="no-data">No command data available</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- 24 Hour Stats Card -->
+            <div class="card">
+                <h2>📈 Commands (Last 24 Hours)</h2>
+                <div class="command-list">
+                    {% if stats.command_usage_24h %}
+                        {% for command, count in stats.command_usage_24h.items() | sort(attribute='1', reverse=true) %}
+                        <div class="command-item">
+                            <span><strong>/{{ command }}</strong></span>
+                            <span class="stat-number" style="font-size: 1.2rem;">{{ count }}</span>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="no-data">No recent command usage</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Monthly Stats Card -->
+            <div class="card">
+                <h2>📊 Commands (Last 30 Days)</h2>
+                <div class="command-list">
+                    {% if stats.command_usage_month %}
+                        {% for command, count in stats.command_usage_month.items() | sort(attribute='1', reverse=true) %}
+                        <div class="command-item">
+                            <span><strong>/{{ command }}</strong></span>
+                            <span class="stat-number" style="font-size: 1.2rem;">{{ count }}</span>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="no-data">No monthly command data</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Summary Stats Card -->
+            <div class="card">
+                <h2>📋 Summary</h2>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-number">{{ stats.total_servers or stats.server_commands | length }}</div>
+                        <div class="stat-label">Total Servers</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{{ stats.total_users or 0 }}</div>
+                        <div class="stat-label">Total Users</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{{ stats.server_commands.values() | sum }}</div>
+                        <div class="stat-label">Total Commands</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{{ stats.command_usage_24h.values() | sum }}</div>
+                        <div class="stat-label">Today's Commands</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{{ stats.command_usage_month.values() | sum }}</div>
+                        <div class="stat-label">Monthly Commands</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if stats.last_updated %}
+        <div class="last-updated">
+            Last updated: {{ stats.last_updated.strftime('%Y-%m-%d %H:%M:%S') }}
+            <span id="live-indicator" style="color: #4CAF50;">● Live</span>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        // Auto-refresh every 10 seconds for faster updates
+        setInterval(() => {
+            // Show updating indicator
+            const indicator = document.getElementById('live-indicator');
+            if (indicator) {
+                indicator.textContent = '● Updating...';
+                indicator.style.color = '#ff9800';
+            }
+            location.reload();
+        }, 10000);
+
+        async function refreshStats() {
+            const button = event.target;
+            const originalText = button.textContent;
+            button.textContent = '🔄 Refreshing...';
+            button.disabled = true;
+
+            try {
+                const response = await fetch('/api/refresh', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('Failed to refresh stats');
+                }
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+
+            button.textContent = originalText;
+            button.disabled = false;
+        }
+
+        async function resetData() {
+            if (!confirm('⚠️ Are you sure you want to reset ALL command data?\n\nThis will delete all command usage statistics and cannot be undone!')) {
+                return;
+            }
+
+            const button = event.target;
+            const originalText = button.textContent;
+            button.textContent = '🗑️ Resetting...';
+            button.disabled = true;
+
+            try {
+                const response = await fetch('/api/reset-data', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    alert('✅ ' + data.message);
+                    location.reload();
+                } else {
+                    alert('❌ Error: ' + data.message);
+                    button.textContent = originalText;
+                    button.disabled = false;
+                }
+            } catch (error) {
+                alert(`❌ Error: ${error.message}`);
+                button.textContent = originalText;
+                button.disabled = false;
+            }
+        }
+
+        // Update uptime every second if bot is running
+        {% if bot_status.running %}
+        let startTime = Date.now() - ({{ bot_status.uptime }} * 1000);
+        setInterval(() => {
+            const uptime = (Date.now() - startTime) / 1000;
+            const hours = uptime / 3600;
+            document.getElementById('uptime').textContent = hours.toFixed(1) + ' hours';
+        }, 1000);
+        {% endif %}
+
+        console.log('🦆 PuddlesBot Dashboard loaded!');
+        console.log('📊 Auto-refresh enabled (every 30 seconds)');
+    </script>
+</body>
+</html>

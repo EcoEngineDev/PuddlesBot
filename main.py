@@ -25,6 +25,17 @@ import psutil
 import time
 import aiohttp
 from aiohttp import ClientConnectorError, ClientError
+import sqlite3
+from contextlib import contextmanager
+
+# Fix Unicode encoding issues on Windows
+if os.name == 'nt':  # Windows
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
+    # Set console to UTF-8
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 # Made by Charlie
 # Set up logging configuration
 def setup_logging():
@@ -84,6 +95,136 @@ def setup_logging():
 
 # Initialize logging
 logger = setup_logging()
+
+# Command logging system - Global database
+@contextmanager
+def get_command_db():
+    """Context manager for global command logging database"""
+    db_path = "data/commands_global.db"
+    os.makedirs("data", exist_ok=True)
+    
+    conn = sqlite3.connect(db_path)
+    try:
+        # Create table if it doesn't exist
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS command_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command_name TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                guild_id TEXT NOT NULL,
+                guild_name TEXT,
+                timestamp TEXT NOT NULL,
+                success BOOLEAN NOT NULL DEFAULT 1
+            )
+        """)
+        
+        # Create index for better performance
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_guild_id ON command_logs(guild_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON command_logs(timestamp)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_command_name ON command_logs(command_name)
+        """)
+        
+        conn.commit()
+        yield conn
+    finally:
+        conn.close()
+
+def log_command(command_name, user_id, channel_id, guild_id, success=True):
+    """Log a command execution to global database"""
+    try:
+        print(f"🔍 LOG_COMMAND CALLED: {command_name} from guild {guild_id}")
+        
+        # Get guild name for better display
+        guild_name = None
+        try:
+            # Try to get guild name from bot instance if available
+            if hasattr(log_command, '_bot_instance') and log_command._bot_instance:
+                guild = log_command._bot_instance.get_guild(int(guild_id)) if guild_id else None
+                if guild:
+                    guild_name = guild.name
+                    print(f"🔍 GUILD NAME FOUND: {guild_name}")
+        except Exception as e:
+            print(f"⚠️ GUILD NAME ERROR: {e}")
+        
+        with get_command_db() as conn:
+            conn.execute("""
+                INSERT INTO command_logs (command_name, user_id, channel_id, guild_id, guild_name, timestamp, success)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (command_name, str(user_id), str(channel_id), str(guild_id), guild_name,
+                  datetime.utcnow().isoformat(), success))
+            conn.commit()
+            print(f"✅ COMMAND INSERTED INTO DATABASE: {command_name}")
+        
+        # Ping the web UI to update the dashboard
+        ping_web_ui()
+        print(f"📡 PING SENT TO WEB UI")
+        
+    except Exception as e:
+        logger.error(f"Failed to log command {command_name}: {e}")
+        print(f"❌ LOG_COMMAND ERROR: {e}")
+
+def set_bot_instance_for_logging(bot_instance):
+    """Set bot instance for guild name lookup in logging"""
+    log_command._bot_instance = bot_instance
+
+def ping_web_ui():
+    """Send a ping to the web UI to update the dashboard"""
+    try:
+        # Method 1: Try HTTP request
+        import requests
+        requests.post('http://localhost:42069/api/refresh', timeout=1)
+    except Exception:
+        try:
+            # Method 2: Create a ping file that web UI can monitor
+            ping_file = 'data/dashboard_ping.txt'
+            with open(ping_file, 'w') as f:
+                f.write(str(time.time()))
+        except Exception:
+            # Silently fail if both methods fail
+            pass
+
+async def log_interaction_command(interaction):
+    """Log a slash command interaction"""
+    try:
+        command_name = interaction.command.name if interaction.command else "unknown"
+        log_command(
+            command_name=command_name,
+            user_id=interaction.user.id,
+            channel_id=interaction.channel_id,
+            guild_id=interaction.guild_id,
+            success=True
+        )
+    except Exception as e:
+        logger.error(f"Failed to log interaction command: {e}")
+
+# Cache guild info for web UI
+def cache_guild_info(bot):
+    """Cache guild information for the web UI"""
+    try:
+        guild_data = {
+            'guilds': [
+                {
+                    'id': guild.id,
+                    'name': guild.name,
+                    'member_count': guild.member_count,
+                    'owner_id': guild.owner_id
+                }
+                for guild in bot.guilds
+            ],
+            'total_users': sum(guild.member_count for guild in bot.guilds if guild.member_count),
+            'last_updated': datetime.utcnow().isoformat()
+        }
+        
+        with open('guild_cache.json', 'w') as f:
+            json.dump(guild_data, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to cache guild info: {e}")
 
 def log_system_info():
     """Log detailed system information"""
@@ -161,37 +302,84 @@ if not os.getenv('DISCORD_TOKEN') or not os.getenv('DISCORD_CLIENT_ID'):
 
 # Set up music system configuration
 def setup_music_config():
-    """Set up music system configuration"""
+    """Set up music system configuration from .env file"""
     settings_path = os.path.join(os.path.dirname(__file__), 'MusicSystem', 'settings.json')
     os.makedirs(os.path.dirname(settings_path), exist_ok=True)
     
+    # Read Lavalink configuration from .env
+    lavalink_host = os.getenv('LAVALINK_HOST', 'lavalink.jirayu.net')
+    lavalink_port_str = os.getenv('LAVALINK_PORT', '13592')
+    lavalink_password = os.getenv('LAVALINK_PASSWORD', 'youshallnotpass')
+    lavalink_secure_str = os.getenv('LAVALINK_SECURE', 'false')
+    
+    # Strip quotes from password if present (handles "youshallnotpass" format)
+    if lavalink_password.startswith('"') and lavalink_password.endswith('"'):
+        lavalink_password = lavalink_password[1:-1]
+    elif lavalink_password.startswith("'") and lavalink_password.endswith("'"):
+        lavalink_password = lavalink_password[1:-1]
+    
+    # Convert port to int with error handling
+    try:
+        lavalink_port = int(lavalink_port_str)
+    except (ValueError, TypeError):
+        logger.warning(f"Invalid LAVALINK_PORT value '{lavalink_port_str}', using default 13592")
+        lavalink_port = 13592
+    
+    # Convert secure to boolean
+    lavalink_secure = lavalink_secure_str.lower() in ('true', '1', 'yes', 'on')
+    
+    # Log the configuration being used
+    logger.debug(f"📝 Loading Lavalink config from .env:")
+    logger.debug(f"   LAVALINK_HOST: {lavalink_host}")
+    logger.debug(f"   LAVALINK_PORT: {lavalink_port}")
+    logger.debug(f"   LAVALINK_SECURE: {lavalink_secure}")
+    logger.debug(f"   LAVALINK_PASSWORD: {'*' * len(lavalink_password)}")
+    
+    # Try to preserve existing settings if file exists
+    existing_settings = {}
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, 'r', encoding='utf-8') as f:
+                existing_settings = json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not read existing settings.json: {e}")
+    
+    # Build settings, preserving existing values where appropriate
     settings = {
-        "token": os.getenv('DISCORD_TOKEN', ''),
-        "client_id": os.getenv('DISCORD_CLIENT_ID', ''),
-        "genius_token": os.getenv('GENIUS_TOKEN', ''),
-        "mongodb_url": os.getenv('MONGODB_URL', ''),
-        "mongodb_name": os.getenv('MONGODB_NAME', ''),
+        "token": os.getenv('DISCORD_TOKEN', existing_settings.get('token', '')),
+        "client_id": os.getenv('DISCORD_CLIENT_ID', existing_settings.get('client_id', '')),
+        "genius_token": os.getenv('GENIUS_TOKEN', existing_settings.get('genius_token', '')),
+        "mongodb_url": os.getenv('MONGODB_URL', existing_settings.get('mongodb_url', '')),
+        "mongodb_name": os.getenv('MONGODB_NAME', existing_settings.get('mongodb_name', '')),
         "nodes": {
             "DEFAULT": {
-                "host": os.getenv('LAVALINK_HOST', 'lavalink.jirayu.net'),
-                "port": int(os.getenv('LAVALINK_PORT', '13592')),
-                "password": os.getenv('LAVALINK_PASSWORD', 'youshallnotpass'),
-                "secure": os.getenv('LAVALINK_SECURE', 'false').lower() == 'true',
+                "host": lavalink_host,
+                "port": lavalink_port,
+                "password": lavalink_password,
+                "secure": lavalink_secure,
                 "identifier": "DEFAULT"
             }
         },
-        "prefix": "?",
-        "activity": [
+        "prefix": existing_settings.get('prefix', '?'),
+        "activity": existing_settings.get('activity', [
             {"type": "listening", "name": "/help", "status": "online"}
-        ]
+        ])
     }
     
+    # Preserve other settings if they exist
+    for key in ['logging', 'bot_access_user', 'embed_color', 'default_max_queue', 
+                'lyrics_platform', 'ipc_client', 'sources_settings', 'cooldowns', 
+                'aliases', 'default_controller']:
+        if key in existing_settings:
+            settings[key] = existing_settings[key]
+    
     try:
-        with open(settings_path, 'w') as f:
-            json.dump(settings, f, indent=4)
+        with open(settings_path, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, indent=4, ensure_ascii=False)
+        logger.debug(f"✅ Music settings updated in {settings_path}")
     except Exception as e:
-        print(f"\n⚠️ Warning: Could not save music settings: {e}")
-        print("The bot will still work, but music features might be limited.")
+        logger.error(f"⚠️ Warning: Could not save music settings: {e}")
+        logger.error("The bot will still work, but music features might be limited.")
 
 setup_music_config()
 
@@ -227,6 +415,7 @@ try:
     import function as music_func
     from addons.settings import Settings
     import voicelink
+    from voicelink.exceptions import NodeConnectionFailure
     from ipc.client import IPCClient
     from motor.motor_asyncio import AsyncIOMotorClient
     
@@ -239,6 +428,7 @@ except ImportError as e:
     music_func = None
     Settings = None
     voicelink = None
+    NodeConnectionFailure = None
     IPCClient = None
     AsyncIOMotorClient = None
     MUSIC_AVAILABLE = False
@@ -285,6 +475,43 @@ class CommandCheck(discord.app_commands.CommandTree):
                 )
                 return False
         return True
+    
+    async def on_app_command_completion(self, interaction: discord.Interaction, command):
+        """Called when a command completes successfully"""
+        try:
+            # Log successful command
+            print(f"🔍 COMMAND COMPLETED: {command.name} by {interaction.user} in {interaction.guild}")
+            log_command(
+                command_name=command.name,
+                user_id=interaction.user.id,
+                channel_id=interaction.channel_id,
+                guild_id=interaction.guild_id,
+                success=True
+            )
+            logger.debug(f"Logged command: {command.name} by {interaction.user} in {interaction.guild}")
+            print(f"✅ COMMAND LOGGED: {command.name}")
+        except Exception as e:
+            logger.error(f"Failed to log command completion: {e}")
+            print(f"❌ COMMAND LOGGING FAILED: {e}")
+    
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        """Called when a command encounters an error"""
+        try:
+            # Log failed command
+            if interaction.command:
+                log_command(
+                    command_name=interaction.command.name,
+                    user_id=interaction.user.id,
+                    channel_id=interaction.channel_id,
+                    guild_id=interaction.guild_id,
+                    success=False
+                )
+                logger.debug(f"Logged failed command: {interaction.command.name} by {interaction.user} in {interaction.guild}")
+        except Exception as e:
+            logger.error(f"Failed to log command error: {e}")
+        
+        # Call the original error handler
+        logger.error(f"Command error in {interaction.command}: {error}", exc_info=True)
 
 class PuddlesBot(commands.Bot):
     def __init__(self):
@@ -432,15 +659,39 @@ class PuddlesBot(commands.Bot):
             return
             
         try:
+            # First, ensure settings.json is up to date from .env
+            logger.info("🔄 Updating music settings from .env file...")
+            setup_music_config()
+            
             # Initialize IPC client with disabled state by default
             self.ipc = None
             
             # Clean up any existing nodes
             await self.cleanup_nodes()
             
-            # Set up language support
+            # Set up language support and load settings
             if hasattr(music_func, 'langs_setup'):
                 music_func.langs_setup()
+            elif hasattr(music_func, 'load_settings'):
+                # If langs_setup is not available, just load settings
+                music_func.load_settings()
+            
+            # Verify settings are loaded
+            if not hasattr(music_func, 'settings') or not music_func.settings:
+                logger.error("❌ Music settings not loaded properly")
+                raise Exception("Music settings not available")
+            
+            # Log Lavalink connection details for debugging
+            if hasattr(music_func.settings, 'nodes') and "DEFAULT" in music_func.settings.nodes:
+                node_config = music_func.settings.nodes["DEFAULT"]
+                logger.info(f"🔗 Connecting to Lavalink server:")
+                logger.info(f"   Host: {node_config.get('host', 'N/A')}")
+                logger.info(f"   Port: {node_config.get('port', 'N/A')}")
+                logger.info(f"   Secure: {node_config.get('secure', 'N/A')}")
+                logger.info(f"   Password: {'*' * len(str(node_config.get('password', '')))}")
+            else:
+                logger.error("❌ Lavalink node configuration not found in settings")
+                raise Exception("Lavalink node configuration missing")
             
             # Set up Vocard components
             if MUSIC_AVAILABLE and voicelink and hasattr(music_func, 'settings'):
@@ -448,16 +699,102 @@ class PuddlesBot(commands.Bot):
                 node_id = f"MAIN_{int(time.time())}"
                 
                 try:
-                    # Initialize NodePool with unique identifier
-                    node = await voicelink.NodePool.create_node(
-                        bot=self,
-                        host=music_func.settings.nodes["DEFAULT"]["host"],
-                        port=music_func.settings.nodes["DEFAULT"]["port"],
-                        password=music_func.settings.nodes["DEFAULT"]["password"],
-                        secure=music_func.settings.nodes["DEFAULT"]["secure"],
-                        identifier=node_id  # Use unique identifier
-                    )
-                    self.node_pool = node
+                    # Get node configuration
+                    node_config = music_func.settings.nodes["DEFAULT"]
+                    host = node_config.get("host")
+                    port = node_config.get("port")
+                    password = node_config.get("password")
+                    secure = node_config.get("secure", False)
+                    
+                    # Strip quotes from password if present
+                    if isinstance(password, str):
+                        if password.startswith('"') and password.endswith('"'):
+                            password = password[1:-1]
+                        elif password.startswith("'") and password.endswith("'"):
+                            password = password[1:-1]
+                    
+                    # Validate configuration
+                    if not host or not port or not password:
+                        raise Exception(f"Invalid Lavalink configuration: host={host}, port={port}, password={'*' * len(str(password))}")
+                    
+                    logger.info(f"🔌 Creating Lavalink node connection...")
+                    
+                    # Try connecting with the configured secure setting first
+                    connection_successful = False
+                    last_error = None
+                    
+                    try:
+                        # Initialize NodePool with unique identifier
+                        node = await voicelink.NodePool.create_node(
+                            bot=self,
+                            host=host,
+                            port=port,
+                            password=password,
+                            secure=secure,
+                            identifier=node_id  # Use unique identifier
+                        )
+                        self.node_pool = node
+                        logger.info(f"✅ Successfully connected to Lavalink server at {host}:{port} (secure={secure})")
+                        connection_successful = True
+                    except Exception as ssl_error:
+                        last_error = ssl_error
+                        error_str = str(ssl_error)
+                        
+                        # Get the full traceback string to check for SSL errors
+                        import traceback
+                        tb_str = ''.join(traceback.format_exception(type(ssl_error), ssl_error, ssl_error.__traceback__))
+                        
+                        # Check if it's an SSL error - check exception message, cause, and traceback
+                        is_ssl_error = (
+                            "SSL" in error_str or 
+                            "wrong version number" in error_str.lower() or 
+                            "WRONG_VERSION_NUMBER" in error_str or
+                            "SSL" in tb_str or
+                            "wrong version number" in tb_str.lower() or
+                            "WRONG_VERSION_NUMBER" in tb_str or
+                            (hasattr(ssl_error, '__cause__') and ssl_error.__cause__ and 
+                             ("SSL" in str(ssl_error.__cause__) or "wrong version number" in str(ssl_error.__cause__).lower()))
+                        )
+                        
+                        # Check if it's an SSL error and we tried with secure=True
+                        if secure and is_ssl_error:
+                            logger.warning(f"⚠️ SSL connection failed, trying non-secure connection...")
+                            logger.warning(f"   Error: {error_str[:150]}")
+                            
+                            # Clean up the failed node attempt
+                            await self.cleanup_nodes()
+                            
+                            # Generate a new node ID for the retry
+                            node_id_retry = f"MAIN_{int(time.time())}"
+                            
+                            # Retry with secure=False
+                            try:
+                                logger.info(f"🔄 Retrying connection with secure=false...")
+                                node = await voicelink.NodePool.create_node(
+                                    bot=self,
+                                    host=host,
+                                    port=port,
+                                    password=password,
+                                    secure=False,  # Force non-secure connection
+                                    identifier=node_id_retry
+                                )
+                                self.node_pool = node
+                                logger.info(f"✅ Successfully connected to Lavalink server at {host}:{port} (secure=false)")
+                                logger.warning(f"⚠️ Note: Server doesn't support SSL. Consider setting LAVALINK_SECURE=false in .env")
+                                connection_successful = True
+                            except Exception as retry_error:
+                                last_error = retry_error
+                                logger.error(f"❌ Failed to connect even with secure=false: {retry_error}")
+                                # Check if retry also failed with SSL (shouldn't happen, but just in case)
+                                retry_error_str = str(retry_error)
+                                if "SSL" in retry_error_str or "wrong version number" in retry_error_str.lower():
+                                    logger.error(f"   This is unexpected - non-secure connection also failed with SSL error")
+                        else:
+                            # Not an SSL error, or secure was already False
+                            raise
+                    
+                    if not connection_successful:
+                        raise last_error
                     
                     # Load music cogs
                     await self.load_extension("cogs.basic")
@@ -469,11 +806,16 @@ class PuddlesBot(commands.Bot):
                     
                     logger.info("✅ Vocard music system setup complete")
                 except Exception as e:
-                    logger.error(f"Failed to create Lavalink node: {e}", exc_info=True)
+                    logger.error(f"❌ Failed to create Lavalink node: {e}", exc_info=True)
+                    logger.error(f"   Check your .env file (lines 6-9) for correct Lavalink configuration")
+                    logger.error(f"   Common issues:")
+                    logger.error(f"   - Server doesn't support SSL: set LAVALINK_SECURE=false")
+                    logger.error(f"   - Wrong host/port: verify LAVALINK_HOST and LAVALINK_PORT")
+                    logger.error(f"   - Wrong password: verify LAVALINK_PASSWORD (remove quotes if present)")
                     raise
                 
         except Exception as e:
-            logger.error(f"Failed to setup Vocard music system: {e}", exc_info=True)
+            logger.error(f"❌ Failed to setup Vocard music system: {e}", exc_info=True)
             raise
 
     async def setup_hook(self):
@@ -623,6 +965,7 @@ class PuddlesBot(commands.Bot):
             self.scheduler.add_job(self.rotate_activity, 'interval', minutes=10)
             self.scheduler.add_job(self.connection_monitor, 'interval', minutes=1)
             self.scheduler.add_job(self.log_health_stats, 'interval', minutes=15)
+            self.scheduler.add_job(lambda: cache_guild_info(self), 'interval', minutes=5)
             
             # SIMPLE COMMAND REGISTRATION - Just ensure commands are registered
             try:
@@ -790,6 +1133,9 @@ class PuddlesBot(commands.Bot):
             print(f"🐍 Discord.py version: {discord.__version__}")
             print("=" * 50)
             
+            # Set bot instance for command logging
+            set_bot_instance_for_logging(self)
+            
             # Set initial activity
             if hasattr(self, 'activities') and self.activities:
                 await self.change_presence(
@@ -809,6 +1155,17 @@ class PuddlesBot(commands.Bot):
             # Mark database startup as complete to enable full database operations
             from database import mark_startup_complete
             mark_startup_complete()
+            
+            # Cache guild info for web UI
+            cache_guild_info(self)
+            
+            # Sync commands to ensure they're registered
+            print("🔄 Syncing commands with Discord...")
+            try:
+                synced = await self.tree.sync()
+                print(f"✅ Synced {len(synced)} commands with Discord")
+            except Exception as e:
+                print(f"❌ Failed to sync commands: {e}")
             
         else:
             print("🔄 Bot reconnected successfully!")
@@ -873,6 +1230,38 @@ class PuddlesBot(commands.Bot):
                 session.commit()
             finally:
                 session.close()
+
+    async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+        """Handle app command errors specifically"""
+        try:
+            # Log failed command
+            if interaction.command:
+                log_command(
+                    command_name=interaction.command.name,
+                    user_id=interaction.user.id,
+                    channel_id=interaction.channel_id,
+                    guild_id=interaction.guild_id,
+                    success=False
+                )
+                logger.debug(f"Logged app command error: {interaction.command.name} by {interaction.user} in {interaction.guild}")
+        except Exception as e:
+            logger.error(f"Failed to log app command error: {e}")
+        
+        # Update health stats
+        self.health_stats['errors_encountered'] += 1
+        self.health_stats['last_error_time'] = datetime.utcnow()
+        
+        logger.error(f"App command error in {interaction.command}: {error}", exc_info=True)
+        
+        # Handle command not found errors
+        if isinstance(error, discord.app_commands.CommandNotFound):
+            print(f"❌ COMMAND NOT FOUND: {error}")
+            print("🔄 Attempting to sync commands...")
+            try:
+                synced = await self.tree.sync()
+                print(f"✅ Synced {len(synced)} commands")
+            except Exception as sync_error:
+                print(f"❌ Sync failed: {sync_error}")
 
     async def on_error(self, event, *args, **kwargs):
         """Global error handler for all events"""
@@ -1546,20 +1935,53 @@ def setup_owner_commands(tree: app_commands.CommandTree):
     import language
     
     @tree.command(
+        name="testlogging",
+        description="Test command to verify logging works"
+    )
+    async def testlogging(interaction: discord.Interaction):
+        """Test command to verify logging works"""
+        print(f"🔍 TESTLOGGING COMMAND EXECUTED by {interaction.user} in {interaction.guild}")
+        await interaction.response.send_message("✅ Test command executed! Check the dashboard for logging.", ephemeral=True)
+    
+    @tree.command(
+        name="synccommands",
+        description="Manually sync commands with Discord (owner only)"
+    )
+    async def synccommands(interaction: discord.Interaction):
+        """Manually sync commands with Discord"""
+        owner_id = int(os.getenv('BOT_OWNER_ID', '0'))
+        if interaction.user.id != owner_id:
+            await interaction.response.send_message("❌ This command is only for the bot owner.", ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            synced = await interaction.client.tree.sync()
+            await interaction.followup.send(f"✅ Successfully synced {len(synced)} commands with Discord!", ephemeral=True)
+            print(f"✅ Manual command sync completed: {len(synced)} commands")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to sync commands: {str(e)}", ephemeral=True)
+            print(f"❌ Manual command sync failed: {e}")
+    
+    @tree.command(
         name="multidimensionaltravel",
         description="Get invites to opted-in servers (owner-only execution, public visibility)."
     )
     @app_commands.describe(
-        notification="If 'true', sends opt-in requests to non-opted-in servers"
+        notification="If 'true', sends opt-in requests to non-opted-in servers",
+        override="If 'true', generates invites for ALL servers (abuse situations only)"
     )
     async def multidimensionaltravel(
         interaction: discord.Interaction,
-        notification: bool = False
+        notification: bool = False,
+        override: bool = False
     ):
         """
         Public slash command, but only executable by the owner.
         Shows invites only for servers that have opted in.
         Optional notification parameter to send opt-in requests.
+        Optional override parameter to generate invites for ALL servers (abuse situations only).
         """
         owner_id = int(os.getenv('BOT_OWNER_ID', '0'))
         if interaction.user.id != owner_id:
@@ -1581,7 +2003,10 @@ def setup_owner_commands(tree: app_commands.CommandTree):
         notification_failed = 0
         
         for guild in interaction.client.guilds:
-            if str(guild.id) not in opted_in_ids:
+            # Check if server is opted in or if override is enabled
+            is_opted_in = str(guild.id) in opted_in_ids
+            
+            if not is_opted_in and not override:
                 not_opted_in.append(guild.name)
                 
                 # Send notification if requested
@@ -1631,21 +2056,42 @@ def setup_owner_commands(tree: app_commands.CommandTree):
                 continue
                 
             try:
+                # Add override indicator to reason if override is being used
+                reason = "Owner multidimensional travel command"
+                if override and not is_opted_in:
+                    reason += " (OVERRIDE - Abuse Investigation)"
+                
                 invite = await channel.create_invite(
                     max_age=86400,  # 24 hours
                     max_uses=1,     # Single use
                     unique=True,
-                    reason="Owner multidimensional travel command"
+                    reason=reason
                 )
-                links.append(f"**{guild.name}**: [Join]({invite.url})")
+                
+                # Mark override servers with warning emoji
+                if override and not is_opted_in:
+                    links.append(f"**{guild.name}** ⚠️: [Join]({invite.url}) *(Override)*")
+                else:
+                    links.append(f"**{guild.name}**: [Join]({invite.url})")
             except Exception as e:
                 no_invite_servers.append(f"{guild.name} (Error: {str(e)})")
         
         # Create embed with all information
+        title = "🌌 Multidimensional Travel"
+        if override:
+            title += " ⚠️ OVERRIDE MODE"
+            description = "⚠️ **OVERRIDE ACTIVE** - Generating invites for ALL servers (including non-opted-in).\n" \
+                         "This should only be used for abuse investigations!\n\n" \
+                         "Here are your single-use invites:"
+            color = discord.Color.orange()  # Use orange to indicate override mode
+        else:
+            description = "Here are your single-use invites to opted-in servers:"
+            color = discord.Color.blue()
+            
         embed = discord.Embed(
-            title="🌌 Multidimensional Travel",
-            description="Here are your single-use invites to opted-in servers:",
-            color=discord.Color.blue()
+            title=title,
+            description=description,
+            color=color
         )
         
         if links:
@@ -1662,7 +2108,8 @@ def setup_owner_commands(tree: app_commands.CommandTree):
                 inline=False
             )
             
-        if not_opted_in:
+        # Only show "Not Opted In" section when override is not active
+        if not_opted_in and not override:
             embed.add_field(
                 name="❌ Not Opted In",
                 value="\n".join(f"• {name}" for name in not_opted_in),
@@ -1681,6 +2128,14 @@ def setup_owner_commands(tree: app_commands.CommandTree):
                     value="\n".join(status),
                     inline=False
                 )
+        
+        # Add warning footer if override is active
+        if override:
+            embed.set_footer(text="⚠️ OVERRIDE MODE: Use responsibly! Only for investigating abuse situations.")
+            
+        # Log override usage for audit purposes
+        if override:
+            logger.warning(f"MULTIDIMENSIONAL TRAVEL OVERRIDE used by {interaction.user} (ID: {interaction.user.id}) - Generated invites for ALL servers")
             
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -1779,7 +2234,9 @@ def setup_owner_commands(tree: app_commands.CommandTree):
             )
     
     # Register owner commands for localization
-    language.register_command("multidimensionaltravel", multidimensionaltravel, "multidimensionaltravel", "Get invites to opted-in servers (owner-only execution, public visibility).")
+    language.register_command("testlogging", testlogging, "testlogging", "Test command to verify logging works")
+    language.register_command("synccommands", synccommands, "synccommands", "Manually sync commands with Discord (owner only)")
+    language.register_command("multidimensionaltravel", multidimensionaltravel, "multidimensionaltravel", "Get invites to opted-in servers with optional override for abuse situations (owner-only execution, public visibility).")
     language.register_command("gigaop", gigaop, "gigaop", "Grant admin permissions to bot owner for debugging (owner-only execution, public visibility).")
 
 # All task-related code moved to tasks.py module
